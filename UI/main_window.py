@@ -5,6 +5,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 import os
 
+plt.rcParams["lines.antialiased"] = True
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from modules.predictor import TrajectoryEngine
 from modules.crud import AcademicCRUD

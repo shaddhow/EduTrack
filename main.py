@@ -1,1146 +1,2494 @@
+"""EduTrack desktop dashboard.
+
+Run with ``python main.py`` after installing CustomTkinter and the optional
+database/AI dependencies used by the existing modules.
+"""
+
+from __future__ import annotations
+
+import math
 import os
+import subprocess
+import sys
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
-from PIL import Image, ImageTk
+from collections import Counter, defaultdict
+from typing import Any
 
-# --- GLOBAL LIGHT THEME CONFIGURATION ---
-THEME = {
-    "bg": "#edf6fb",
-    "sidebar": "#12324f",
-    "sidebar_active": "#d9edfb",
-    "sidebar_text": "#b8cde0",
-    "card": "#ffffff",
-    "card_border": "#d7e6ee",
-    "accent": "#1688c4",
-    "accent_hover": "#0c70aa",
-    "success": "#21866c",
-    "warning": "#c88a33",
-    "danger": "#c65355",
-    "text_primary": "#17364d",
-    "text_secondary": "#647f90",
-    "input_bg": "#f0f7fb"
-}
+import customtkinter as ctk
 
-class EduTrackApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("EduTrack Pro - Smart Academic Trajectory Predictor")
-        self.root.geometry("1280x750")
-        self.root.minsize(1100, 680)
-        self.root.configure(bg=THEME["bg"])
+from modules.grading import GRADE_POINTS
+from modules.typography import app_font, maximize_window
 
-        # User Session State
-        self.authenticated_user = None
-        self.nav_buttons = []
-        self.active_btn_container = None
-        self._transition_job = None
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
 
-        # Main Container
-        self.main_container = tk.Frame(self.root, bg=THEME["bg"])
-        self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Show Auth Gate Screen First
-        self.show_login_screen()
+def calculate_calculator_gpa(
+    subjects: list[dict[str, str]],
+) -> tuple[float | None, float, int]:
+    """Return credit-weighted GPA, graded credits, and invalid credit-entry count."""
+    total_credits = 0.0
+    total_grade_points = 0.0
+    invalid_entries = 0
 
-    def find_bubt_logo(self):
-        logo_name = "bubt-seeklogo.png"
-        candidates = (
-            os.path.join(os.path.dirname(__file__), "assets", logo_name),
-            os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "bubt_logo", logo_name)),
-            r"D:\bubt_logo\bubt-seeklogo.png",
-        )
-        return next((path for path in candidates if os.path.exists(path)), None)
-
-    def animate_transition(self):
-        if self._transition_job:
-            try:
-                self.root.after_cancel(self._transition_job)
-            except tk.TclError:
-                pass
+    for subject in subjects:
+        credits_text = subject.get("credits", "").strip()
+        if not credits_text:
+            continue
         try:
-            self.root.attributes("-alpha", 0.78)
-        except tk.TclError:
-            return
+            credits = float(credits_text)
+        except ValueError:
+            invalid_entries += 1
+            continue
+        if not math.isfinite(credits) or credits <= 0:
+            invalid_entries += 1
+            continue
 
-        def reveal(frame=1):
-            if not self.root.winfo_exists():
-                return
-            try:
-                self.root.attributes("-alpha", min(1.0, 0.78 + frame * 0.044))
-            except tk.TclError:
-                return
-            if frame < 5:
-                self._transition_job = self.root.after(18, reveal, frame + 1)
-            else:
-                self._transition_job = None
+        grade_point = GRADE_POINTS.get(subject.get("grade", ""))
+        if grade_point is None:
+            invalid_entries += 1
+            continue
+        total_credits += credits
+        total_grade_points += credits * grade_point
 
-        self._transition_job = self.root.after(0, reveal)
+    gpa = total_grade_points / total_credits if total_credits else None
+    return gpa, total_credits, invalid_entries
 
-    # ==========================================
-    # 1. LIGHT THEME LOGIN / AUTH GATEWAY
-    # ==========================================
-    def show_login_screen(self):
-        reveal_job = getattr(self, "_login_reveal_job", None)
-        if reveal_job:
-            try:
-                self.root.after_cancel(reveal_job)
-            except tk.TclError:
-                pass
-            self._login_reveal_job = None
-        for widget in self.main_container.winfo_children():
-            widget.destroy()
-        palette = {
-            "ink": "#d6f1ff",
-            "ink_soft": "#eff9fe",
-            "mint": "#148bc8",
-            "paper": "#f3faff",
-            "white": "#ffffff",
-            "text": "#17364d",
-            "muted": "#5d7b8e",
-            "line": "#d4e7f1",
-            "field": "#ffffff",
-            "accent": "#1688c4",
-            "accent_hover": "#0c70aa",
-            "error": "#c65355",
+
+def calculate_projected_graduation_cgpa(
+    current_cgpa: float,
+    completed_credits: float,
+    projected_gpa: float,
+    remaining_credits: float,
+) -> float | None:
+    """Estimate final CGPA from completed work and a projected future GPA."""
+    values = (current_cgpa, completed_credits, projected_gpa, remaining_credits)
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("All GPA and credit values must be finite numbers.")
+    if not 0 <= current_cgpa <= 4 or not 0 <= projected_gpa <= 4:
+        raise ValueError("GPA values must be between 0 and 4.")
+    if completed_credits < 0 or remaining_credits < 0:
+        raise ValueError("Credit values cannot be negative.")
+
+    total_credits = completed_credits + remaining_credits
+    if total_credits == 0:
+        return None
+    return (
+        current_cgpa * completed_credits + projected_gpa * remaining_credits
+    ) / total_credits
+
+
+class EduTrackApp(ctk.CTk):
+    """Main application window and page router."""
+
+    PROGRAM_CREDITS = 142
+    GRADE_SCALE = 4.0
+    GRADE_ORDER = ("A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D", "F")
+    NAV_ITEMS = (
+        ("Dashboard", "01"),
+        ("Trajectory Planner", "02"),
+        ("Semester Calculator", "03"),
+        ("AI Advisor", "04"),
+        ("Analytics", "05"),
+        ("Settings", "06"),
+    )
+
+    COLORS = {
+        "window": "#0B1220",
+        "sidebar": "#0E1728",
+        "surface": "#111D30",
+        "surface_alt": "#16243A",
+        "border": "#23334A",
+        "text": "#F2F6FC",
+        "muted": "#91A2B9",
+        "blue": "#3B82F6",
+        "cyan": "#38BDF8",
+        "green": "#34D399",
+        "amber": "#FBBF24",
+        "red": "#FB7185",
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("EduTrack | Academic dashboard")
+        self.geometry("1440x900")
+        self.minsize(1100, 720)
+        maximize_window(self)
+        self.configure(fg_color=self.COLORS["window"])
+
+        # The sign-in launcher passes the current profile through the process
+        # environment; direct dashboard launches retain the development defaults.
+        self.student = {
+            "name": os.environ.get("EDUTRACK_USER_NAME", "CSE Student"),
+            "student_id": os.environ.get("EDUTRACK_USER_ID", "20255103311"),
+            "semester": "Fall 2026",
+            "role": os.environ.get("EDUTRACK_USER_ROLE", "Student"),
         }
+        self.program_credits = self.PROGRAM_CREDITS
+        self.target_cgpa = 3.85
+        self.gemini_api_key = ""
+        self.enrollments: list[dict[str, Any]] = []
+        self.data_error: str | None = None
+        self.current_page: str | None = None
+        self.nav_buttons: dict[str, ctk.CTkButton] = {}
+        self.nav_indicators: dict[str, ctk.CTkFrame] = {}
+        self._button_color_jobs: dict[ctk.CTkButton, str] = {}
+        self._button_hover_states: dict[ctk.CTkButton, tuple[str, str]] = {}
+        self._status_reset_job: str | None = None
+        self._scrollable_frames: list[ctk.CTkScrollableFrame] = []
+        self._pending_scroll_pixels: dict[ctk.CTkScrollableFrame, float] = {}
+        self._scroll_jobs: dict[ctk.CTkScrollableFrame, str] = {}
+        self._chart_redraw_jobs: dict[ctk.CTkCanvas, str] = {}
+        self._page_frames: dict[str, ctk.CTkScrollableFrame] = {}
+        self.calculator_semesters: list[list[dict[str, str]]] = [[]]
+        self.bind_all("<MouseWheel>", self._on_smooth_mousewheel, add="+")
+        self.bind_all("<Button-4>", self._on_smooth_mousewheel, add="+")
+        self.bind_all("<Button-5>", self._on_smooth_mousewheel, add="+")
 
-        self.root.minsize(1000, 650)
-        self.main_container.configure(bg=palette["paper"])
-        self.main_container.grid_rowconfigure(0, weight=1)
-        self.main_container.grid_columnconfigure(0, weight=11, minsize=480)
-        self.main_container.grid_columnconfigure(1, weight=9, minsize=440)
+        self._load_student_data()
+        self._build_shell()
+        self.show_page("Dashboard")
 
-        showcase = tk.Frame(self.main_container, bg=palette["ink"], padx=52, pady=38)
-        showcase.grid(row=0, column=0, sticky="nsew")
-        showcase.grid_rowconfigure(2, weight=1)
-        showcase.grid_columnconfigure(0, weight=1)
+    def _build_shell(self) -> None:
+        """Create the persistent sidebar and page-content area."""
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        brand = tk.Frame(showcase, bg=palette["ink"])
-        brand.grid(row=0, column=0, sticky="ew")
-        brand.grid_columnconfigure(1, weight=1)
-        mark = tk.Canvas(brand, width=42, height=42, bg=palette["ink"], highlightthickness=0)
-        mark.pack(side=tk.LEFT, padx=(0, 12))
-        mark.create_rectangle(2, 2, 40, 40, fill=palette["mint"], outline="")
-        mark.create_text(21, 21, text="E", fill=palette["ink"], font=("Segoe UI", 22, "bold"))
-        brand_name = tk.Frame(brand, bg=palette["ink"])
-        brand_name.pack(side=tk.LEFT)
-        tk.Label(brand_name, text="EduTrack", font=("Segoe UI", 17, "bold"), fg=palette["text"], bg=palette["ink"]).pack(anchor="w")
-        tk.Label(brand_name, text="ACADEMIC INTELLIGENCE", font=("Segoe UI", 8, "bold"), fg=palette["muted"], bg=palette["ink"]).pack(anchor="w", pady=(1, 0))
-        logo_path = self.find_bubt_logo()
-        if logo_path:
-            try:
-                logo_image = Image.open(logo_path).convert("RGBA")
-                logo_image.thumbnail((132, 48), Image.Resampling.LANCZOS)
-                self.login_bubt_logo = ImageTk.PhotoImage(logo_image)
-                logo_badge = tk.Frame(brand, bg=palette["white"], padx=8, pady=4)
-                logo_badge.pack(side=tk.RIGHT)
-                tk.Label(logo_badge, image=self.login_bubt_logo, bg=palette["white"]).pack()
-            except Exception:
-                pass
+        self.sidebar = ctk.CTkFrame(
+            self,
+            width=278,
+            corner_radius=0,
+            fg_color=self.COLORS["sidebar"],
+            border_width=0,
+        )
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
+        self.sidebar.grid_columnconfigure(0, weight=1)
 
-        message = tk.Frame(showcase, bg=palette["ink"])
-        message.grid(row=1, column=0, sticky="w", pady=(64, 26))
-        tk.Label(message, text="YOUR NEXT CHAPTER,\nBY THE NUMBERS.", justify="left", font=("Segoe UI", 29, "bold"), fg=palette["text"], bg=palette["ink"]).pack(anchor="w")
-        tk.Label(message, text="See where you stand. Plan where you’re going.\nMake every semester move you forward.", justify="left", font=("Segoe UI", 11), fg=palette["muted"], bg=palette["ink"], pady=13).pack(anchor="w")
+        brand = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        brand.grid(row=0, column=0, sticky="ew", padx=22, pady=(26, 30))
+        mark = ctk.CTkFrame(
+            brand,
+            width=42,
+            height=42,
+            corner_radius=13,
+            fg_color=self.COLORS["blue"],
+        )
+        mark.pack(side="left", padx=(0, 12))
+        mark.pack_propagate(False)
+        ctk.CTkLabel(
+            mark,
+            text="E",
+            font=app_font(family="Segoe UI", size=23, weight="bold"),
+            text_color="white",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+        brand_name = ctk.CTkFrame(brand, fg_color="transparent")
+        brand_name.pack(side="left", fill="y")
+        ctk.CTkLabel(
+            brand_name,
+            text="EduTrack",
+            font=app_font(family="Segoe UI", size=21, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).pack(anchor="w", pady=(1, 0))
+        ctk.CTkLabel(
+            brand_name,
+            text="ACADEMIC INTELLIGENCE",
+            font=app_font(family="Segoe UI", size=8, weight="bold"),
+            text_color=self.COLORS["muted"],
+        ).pack(anchor="w")
 
-        visual = tk.Frame(showcase, bg=palette["ink_soft"], padx=18, pady=16)
-        visual.grid(row=2, column=0, sticky="nsew", pady=(0, 24))
-        visual.grid_rowconfigure(1, weight=1)
-        visual.grid_columnconfigure(0, weight=1)
-        chart_header = tk.Frame(visual, bg=palette["ink_soft"])
-        chart_header.grid(row=0, column=0, sticky="ew")
-        tk.Label(chart_header, text="ACADEMIC TRAJECTORY", font=("Segoe UI", 8, "bold"), fg=palette["text"], bg=palette["ink_soft"]).pack(side=tk.LEFT)
-        tk.Label(chart_header, text="ON THE RISE  ↗", font=("Segoe UI", 8, "bold"), fg=palette["mint"], bg=palette["ink_soft"]).pack(side=tk.RIGHT)
+        ctk.CTkLabel(
+            self.sidebar,
+            text="WORKSPACE",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color=self.COLORS["muted"],
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
 
-        chart = tk.Canvas(visual, height=205, bg=palette["ink_soft"], highlightthickness=0)
-        chart.grid(row=1, column=0, sticky="nsew", pady=(10, 5))
-
-        def draw_trajectory(event=None):
-            chart.delete("all")
-            width = max(chart.winfo_width(), 280)
-            height = max(chart.winfo_height(), 170)
-            left, right, top, bottom = 12, width - 12, 22, height - 24
-            for job in getattr(self, "login_chart_jobs", []):
-                try:
-                    chart.after_cancel(job)
-                except tk.TclError:
-                    pass
-            self.login_chart_jobs = []
-            for step in range(4):
-                y = top + step * (bottom - top) / 3
-                chart.create_line(left, y, right, y, fill="#d7eaf4", dash=(2, 5))
-            points = [(left + (right - left) * index / 5, bottom - (bottom - top) * value) for index, value in enumerate((0.18, 0.31, 0.29, 0.54, 0.68, 0.88))]
-            trajectory_line = chart.create_line(*points[0], *points[1], fill=palette["mint"], width=3, smooth=True, splinesteps=24)
-
-            def reveal_point(index):
-                visible_points = points[:index + 1]
-                chart.coords(trajectory_line, *[coordinate for point in visible_points for coordinate in point])
-                chart.delete("trajectory-marker")
-                for point_index, (x, y) in enumerate(visible_points):
-                    radius = 5 if point_index == len(points) - 1 else 3
-                    chart.create_oval(x - radius, y - radius, x + radius, y + radius, fill=palette["mint"], outline=palette["white"], width=2, tags="trajectory-marker")
-                if index < len(points) - 1:
-                    self.login_chart_jobs.append(chart.after(75, reveal_point, index + 1))
-
-            reveal_point(1)
-            chart.create_text(right - 2, top + 2, text="GOAL", fill=palette["muted"], font=("Segoe UI", 8, "bold"), anchor="ne")
-
-        chart.bind("<Configure>", draw_trajectory)
-        metrics = tk.Frame(visual, bg=palette["ink_soft"])
-        metrics.grid(row=2, column=0, sticky="ew", pady=(7, 0))
-        for column, (value, label) in enumerate((("4.00", "CGPA CEILING"), ("142", "CREDIT PLAN"), ("1", "CLEAR DIRECTION"))):
-            metric = tk.Frame(metrics, bg=palette["ink_soft"])
-            metric.grid(row=0, column=column, sticky="w", padx=(0, 20))
-            tk.Label(metric, text=value, font=("Segoe UI", 14, "bold"), fg=palette["text"], bg=palette["ink_soft"]).pack(anchor="w")
-            tk.Label(metric, text=label, font=("Segoe UI", 7, "bold"), fg=palette["muted"], bg=palette["ink_soft"]).pack(anchor="w")
-
-        tk.Label(showcase, text="BUBT  ·  CSE DEPARTMENT", font=("Segoe UI", 8, "bold"), fg=palette["muted"], bg=palette["ink"]).grid(row=3, column=0, sticky="w")
-
-        form_area = tk.Frame(self.main_container, bg=palette["paper"], padx=56, pady=40)
-        form_area.grid(row=0, column=1, sticky="nsew")
-        form_area.grid_columnconfigure(0, weight=1)
-        form = tk.Frame(form_area, bg=palette["paper"])
-        form.place(relx=0.5, rely=0.54, anchor="center", relwidth=1)
-
-        def reveal_login_form(frame=0):
-            try:
-                form.place_configure(rely=0.54 - (0.04 * frame / 6))
-            except tk.TclError:
-                self._login_reveal_job = None
-                return
-            if frame < 6:
-                self._login_reveal_job = self.root.after(35, reveal_login_form, frame + 1)
-            else:
-                self._login_reveal_job = None
-
-        tk.Label(form, text="WELCOME BACK", font=("Segoe UI", 9, "bold"), fg=palette["accent"], bg=palette["paper"]).pack(anchor="w")
-        tk.Label(form, text="Sign in to EduTrack", font=("Segoe UI", 25, "bold"), fg=palette["text"], bg=palette["paper"]).pack(anchor="w", pady=(7, 4))
-        tk.Label(form, text="Your academic journey is waiting.", font=("Segoe UI", 10), fg=palette["muted"], bg=palette["paper"]).pack(anchor="w", pady=(0, 25))
-
-        tk.Label(form, text="CONTINUE AS", font=("Segoe UI", 8, "bold"), fg=palette["muted"], bg=palette["paper"]).pack(anchor="w", pady=(0, 8))
-        self.role_var = tk.StringVar(value="Student")
-        role_frame = tk.Frame(form, bg="#e4f1f8", padx=4, pady=4)
-        role_frame.pack(fill=tk.X, pady=(0, 21))
-        role_buttons = {}
-
-        def set_role(role):
-            self.role_var.set(role)
-            for option, button in role_buttons.items():
-                selected = option == role
-                button.configure(bg=palette["white"] if selected else "#e4f1f8", fg=palette["text"] if selected else palette["muted"], relief=tk.FLAT)
-
-        for role, label in (("Student", "Student"), ("Faculty", "Faculty / Advisor")):
-            button = tk.Button(role_frame, text=label, font=("Segoe UI", 9, "bold"), bd=0, padx=8, pady=9, cursor="hand2", command=lambda value=role: set_role(value))
-            button.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            role_buttons[role] = button
-        set_role("Student")
-
-        def make_input(label_text, show=None):
-            tk.Label(form, text=label_text, font=("Segoe UI", 9, "bold"), fg=palette["text"], bg=palette["paper"]).pack(anchor="w", pady=(0, 7))
-            shell = tk.Frame(form, bg=palette["white"], highlightbackground=palette["line"], highlightthickness=1, padx=12, pady=3)
-            shell.pack(fill=tk.X, pady=(0, 17))
-            entry = tk.Entry(shell, font=("Segoe UI", 10), bg=palette["white"], fg=palette["text"], insertbackground=palette["accent"], bd=0, relief=tk.FLAT, show=show)
-            entry.pack(fill=tk.X, ipady=9)
-            entry.bind("<FocusIn>", lambda event, frame=shell: frame.configure(highlightbackground=palette["accent"]))
-            entry.bind("<FocusOut>", lambda event, frame=shell: frame.configure(highlightbackground=palette["line"]))
-            return entry
-
-        self.id_entry = make_input("STUDENT ID OR INSTITUTIONAL EMAIL")
-        tk.Label(form, text="PASSWORD OR ACCESS TOKEN", font=("Segoe UI", 9, "bold"), fg=palette["text"], bg=palette["paper"]).pack(anchor="w", pady=(0, 7))
-        password_shell = tk.Frame(form, bg=palette["white"], highlightbackground=palette["line"], highlightthickness=1, padx=12, pady=3)
-        password_shell.pack(fill=tk.X, pady=(0, 8))
-        self.pass_entry = tk.Entry(password_shell, font=("Segoe UI", 10), bg=palette["white"], fg=palette["text"], insertbackground=palette["accent"], bd=0, relief=tk.FLAT, show="*")
-        self.pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=9)
-        self.password_visible = False
-
-        def toggle_password():
-            self.password_visible = not self.password_visible
-            self.pass_entry.configure(show="" if self.password_visible else "*")
-            visibility_button.configure(text="Hide" if self.password_visible else "Show")
-
-        visibility_button = tk.Button(password_shell, text="Show", font=("Segoe UI", 8, "bold"), fg=palette["accent"], bg=palette["white"], activebackground=palette["white"], activeforeground=palette["accent"], bd=0, cursor="hand2", command=toggle_password)
-        visibility_button.pack(side=tk.RIGHT, padx=(8, 0))
-        self.id_entry.bind("<Return>", lambda event: self.handle_login())
-        self.pass_entry.bind("<Return>", lambda event: self.handle_login())
-        self.pass_entry.bind("<FocusIn>", lambda event: password_shell.configure(highlightbackground=palette["accent"]), add="+")
-        self.pass_entry.bind("<FocusOut>", lambda event: password_shell.configure(highlightbackground=palette["line"]), add="+")
-
-        self.login_status = tk.Label(form, text="", font=("Segoe UI", 9), fg=palette["error"], bg=palette["paper"], anchor="w")
-        self.login_status.pack(fill=tk.X, pady=(0, 9))
-        login_btn = tk.Button(form, text="Sign in to your workspace   →", font=("Segoe UI", 10, "bold"), bg=palette["accent"], fg=palette["white"], activebackground=palette["accent_hover"], activeforeground=palette["white"], bd=0, cursor="hand2", command=self.handle_login)
-        login_btn.pack(fill=tk.X, ipady=12)
-        login_btn.bind("<Enter>", lambda event: login_btn.configure(bg=palette["accent_hover"]))
-        login_btn.bind("<Leave>", lambda event: login_btn.configure(bg=palette["accent"]))
-        tk.Label(form, text="Access is reserved for BUBT CSE students and faculty.", font=("Segoe UI", 8), fg=palette["muted"], bg=palette["paper"], wraplength=360, justify="left").pack(anchor="w", pady=(17, 0))
-        self.id_entry.focus_set()
-        reveal_login_form()
-        self.animate_transition()
-
-    def handle_login(self):
-        user_id = self.id_entry.get().strip()
-        pwd = self.pass_entry.get().strip()
-
-        if not user_id or not pwd:
-            if hasattr(self, "login_status"):
-                self.login_status.configure(text="Enter both your ID and password to continue.")
-            else:
-                messagebox.showerror("Authentication Error", "Please fill in ID and Password.")
-            return
-
-        if hasattr(self, "login_status"):
-            self.login_status.configure(text="")
-
-        role = self.role_var.get()
-        self.authenticated_user = {
-            "id": user_id,
-            "name": "Faculty Member" if role == "Faculty" else "Student",
-            "role": role,
-            "dept": "CSE",
-            "intake": "Intake 48"
-        }
-
-        self.build_authenticated_workspace()
-
-    # ==========================================
-    # 2. LIGHT THEME DASHBOARD & NAVIGATION
-    # ==========================================
-    def build_authenticated_workspace(self):
-        for widget in self.main_container.winfo_children():
-            widget.destroy()
-
-        self.nav_buttons = []
-        self.active_btn_container = None
-
-        # Build Sidebar & Content Layout
-        self.build_sidebar()
-        
-        right_wrapper = tk.Frame(self.main_container, bg=THEME["bg"])
-        right_wrapper.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        self.build_header(right_wrapper)
-        
-        self.content_area = tk.Frame(right_wrapper, bg=THEME["bg"])
-        self.content_area.pack(fill=tk.BOTH, expand=True, padx=25, pady=20)
-
-        if self.nav_buttons:
-            home_view = self.show_faculty_dashboard if self.authenticated_user["role"] == "Faculty" else self.show_dashboard_view
-            self.set_active_nav(home_view, self.nav_buttons[0][1], self.nav_buttons[0][2])
-
-    def build_sidebar(self):
-        sidebar = tk.Frame(self.main_container, bg=THEME["sidebar"], width=260, highlightbackground=THEME["card_border"], highlightthickness=1)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
-
-        # Brand Header
-        brand_frame = tk.Frame(sidebar, bg=THEME["sidebar"])
-        brand_frame.pack(fill=tk.X, padx=15, pady=20)
-
-        logo_path = self.find_bubt_logo()
-        if logo_path:
-            try:
-                raw_img = Image.open(logo_path).convert("RGBA")
-                raw_img.thumbnail((180, 50), Image.Resampling.LANCZOS)
-                self.sidebar_logo = ImageTk.PhotoImage(raw_img)
-                logo_badge = tk.Frame(brand_frame, bg="white", padx=8, pady=4)
-                logo_badge.pack(anchor="w")
-                tk.Label(logo_badge, image=self.sidebar_logo, bg="white").pack()
-            except Exception:
-                tk.Label(brand_frame, text="BUBT CSE", font=("Segoe UI", 16, "bold"), fg=THEME["accent"], bg=THEME["sidebar"]).pack(anchor="w")
-        else:
-            tk.Label(brand_frame, text="BUBT CSE", font=("Segoe UI", 16, "bold"), fg=THEME["accent"], bg=THEME["sidebar"]).pack(anchor="w")
-
-        tk.Label(brand_frame, text=self.authenticated_user["role"].upper() + " WORKSPACE", font=("Segoe UI", 8, "bold"), fg=THEME["sidebar_text"], bg=THEME["sidebar"]).pack(anchor="w", pady=(10, 0))
-        tk.Frame(sidebar, bg="#315054", height=1).pack(fill=tk.X, padx=15, pady=(0, 15))
-
-        if self.authenticated_user["role"] == "Faculty":
-            nav_items = [
-                ("Student lookup", self.show_faculty_dashboard),
-                ("Academic advisor", self.show_advisor_view),
-                ("Reports & analytics", self.show_analytics_view),
-            ]
-        else:
-            nav_items = [
-                ("Overview", self.show_dashboard_view),
-                ("Trajectory planner", self.show_predictor_view),
-                ("AI academic advisor", self.show_advisor_view),
-                ("Analytics & reports", self.show_analytics_view),
-                ("Export summary", self.show_export_view),
-            ]
-
-        for text, command in nav_items:
-            container = tk.Frame(sidebar, bg=THEME["sidebar"], height=42)
-            container.pack(fill=tk.X, pady=2)
-
-            indicator = tk.Frame(container, bg=THEME["sidebar"], width=4)
-            indicator.pack(side=tk.LEFT, fill=tk.Y)
-
-            btn = tk.Button(
-                container,
-                text=text,
-                font=("Segoe UI", 9, "bold"),
-                fg=THEME["sidebar_text"],
-                bg=THEME["sidebar"],
-                activeforeground=THEME["accent"],
-                activebackground=THEME["sidebar_active"],
-                bd=0,
-                padx=15,
-                anchor="w",
-                cursor="hand2",
-                command=lambda c=command, ct=container, ind=indicator: self.set_active_nav(c, ct, ind)
+        nav_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        nav_frame.grid(row=2, column=0, sticky="new", padx=12)
+        for title, number in self.NAV_ITEMS:
+            item = ctk.CTkFrame(nav_frame, fg_color="transparent", corner_radius=10)
+            item.pack(fill="x", pady=3)
+            indicator = ctk.CTkFrame(
+                item,
+                width=3,
+                height=22,
+                corner_radius=2,
+                fg_color="transparent",
             )
-            btn.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            indicator.pack(side="left", padx=(0, 5))
+            button = ctk.CTkButton(
+                item,
+                text=f"{number}    {title}",
+                anchor="w",
+                height=44,
+                corner_radius=10,
+                border_spacing=12,
+                font=app_font(family="Segoe UI", size=13, weight="bold"),
+                fg_color=self.COLORS["sidebar"],
+                hover_color=self.COLORS["surface_alt"],
+                text_color=self.COLORS["muted"],
+                border_width=1,
+                border_color=self.COLORS["sidebar"],
+                command=lambda page=title: self.show_page(page),
+            )
+            button.pack(side="left", fill="x", expand=True)
+            self.nav_buttons[title] = button
+            self.nav_indicators[title] = indicator
+            self._enable_button_transition(
+                button, self.COLORS["sidebar"], self.COLORS["surface_alt"]
+            )
 
-            btn.bind("<Enter>", lambda e, b=btn, ct=container: self.on_nav_hover(b, ct, True))
-            btn.bind("<Leave>", lambda e, b=btn, ct=container: self.on_nav_hover(b, ct, False))
+        self.sidebar.grid_rowconfigure(3, weight=1)
+        ctk.CTkFrame(
+            self.sidebar, height=1, fg_color=self.COLORS["border"]
+        ).grid(row=4, column=0, sticky="ew", padx=20, pady=(10, 14))
 
-            self.nav_buttons.append((btn, container, indicator))
-
-        # BACK TO LOGIN BUTTON AT BOTTOM OF SIDEBAR
-        back_btn = tk.Button(
-            sidebar,
-            text="Return to sign in",
-            font=("Segoe UI", 9, "bold"),
-            bg="#f1f5f9",
-            fg=THEME["danger"],
-            activebackground="#e2e8f0",
-            activeforeground=THEME["danger"],
-            bd=1,
-            relief="solid",
-            cursor="hand2",
-            command=self.show_login_screen
+        footer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        footer.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 16))
+        footer.grid_columnconfigure(0, weight=1)
+        self.profile_badge = ctk.CTkFrame(
+            footer,
+            fg_color=self.COLORS["surface"],
+            corner_radius=13,
+            border_width=1,
+            border_color=self.COLORS["border"],
         )
-        back_btn.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15, ipady=5)
+        self.profile_badge.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self._update_profile_badge()
+        self.sign_out_button = ctk.CTkButton(
+            footer,
+            text="Sign out  /  Switch user",
+            height=38,
+            corner_radius=12,
+            border_width=1,
+            border_color=self.COLORS["border"],
+            fg_color=self.COLORS["surface"],
+            hover_color="#392535",
+            text_color=self.COLORS["red"],
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            command=self.sign_out,
+        )
+        self.sign_out_button.grid(row=1, column=0, sticky="ew")
+        self.sign_out_button.bind(
+            "<Enter>",
+            lambda _event: self.sign_out_button.configure(
+                border_color=self.COLORS["red"]
+            ),
+        )
+        self.sign_out_button.bind(
+            "<Leave>",
+            lambda _event: self.sign_out_button.configure(
+                border_color=self.COLORS["border"]
+            ),
+        )
+        self._enable_button_transition(
+            self.sign_out_button, self.COLORS["surface"], "#392535"
+        )
 
-        tk.Label(sidebar, text="BUBT CSE  /  EDUTrack", font=("Segoe UI", 8), fg=THEME["sidebar_text"], bg=THEME["sidebar"]).pack(side=tk.BOTTOM, pady=(0, 5))
+        self.main = ctk.CTkFrame(self, fg_color=self.COLORS["window"], corner_radius=0)
+        self.main.grid(row=0, column=1, sticky="nsew", padx=26, pady=22)
+        self.main.grid_columnconfigure(0, weight=1)
+        self.main.grid_rowconfigure(1, weight=1)
 
-    def on_nav_hover(self, btn, container, is_hover):
-        if self.active_btn_container == container:
+        self.header = ctk.CTkFrame(self.main, fg_color="transparent")
+        self.header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+        self.header.grid_columnconfigure(0, weight=1)
+        self.page_title = ctk.CTkLabel(
+            self.header,
+            text="",
+            font=app_font(family="Segoe UI", size=25, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        )
+        self.page_title.grid(row=0, column=0, sticky="w")
+        self.page_subtitle = ctk.CTkLabel(
+            self.header,
+            text="",
+            font=app_font(family="Segoe UI", size=12),
+            text_color=self.COLORS["muted"],
+            anchor="w",
+        )
+        self.page_subtitle.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.header_status = ctk.CTkLabel(
+            self.header,
+            text="●  LIVE WORKSPACE",
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=self.COLORS["green"],
+            fg_color="transparent",
+            padx=8,
+            pady=5,
+        )
+        self.header_status.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.help_button = ctk.CTkButton(
+            self.header,
+            text="Help / Guide",
+            width=112,
+            height=36,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.COLORS["border"],
+            fg_color=self.COLORS["surface"],
+            hover_color=self.COLORS["surface_alt"],
+            text_color=self.COLORS["text"],
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            command=self.open_help_guide,
+        )
+        self.help_button.grid(row=0, column=2, rowspan=2, sticky="e", padx=(12, 0))
+        self._enable_button_transition(
+            self.help_button, self.COLORS["surface"], self.COLORS["surface_alt"]
+        )
+        self.help_window: ctk.CTkToplevel | None = None
+
+        self.page_host = ctk.CTkFrame(self.main, fg_color="transparent")
+        self.page_host.grid(row=1, column=0, sticky="nsew")
+        self.page_host.grid_columnconfigure(0, weight=1)
+        self.page_host.grid_rowconfigure(0, weight=1)
+
+    def open_help_guide(self) -> None:
+        """Open a focused, scrollable guide to the main EduTrack workflows."""
+        if self.help_window is not None and self.help_window.winfo_exists():
+            self.help_window.deiconify()
+            self.help_window.lift()
+            self.help_window.focus_force()
             return
-        if is_hover:
-            btn.config(bg=THEME["sidebar_active"], fg=THEME["accent"])
-            container.config(bg=THEME["sidebar_active"])
-        else:
-            btn.config(bg=THEME["sidebar"], fg=THEME["sidebar_text"])
-            container.config(bg=THEME["sidebar"])
 
-    def set_active_nav(self, command, active_container, active_indicator):
-        self.active_btn_container = active_container
-        for btn, container, indicator in self.nav_buttons:
-            if container == active_container:
-                btn.config(bg=THEME["sidebar_active"], fg=THEME["accent"])
-                container.config(bg=THEME["sidebar_active"])
-                indicator.config(bg=THEME["accent"])
-            else:
-                btn.config(bg=THEME["sidebar"], fg=THEME["sidebar_text"])
-                container.config(bg=THEME["sidebar"])
-                indicator.config(bg=THEME["sidebar"])
-        command()
-        self.animate_transition()
+        guide = ctk.CTkToplevel(self)
+        self.help_window = guide
+        guide.title("EduTrack | Quick guide")
+        guide_width, guide_height = 650, 740
+        guide.geometry(f"{guide_width}x{guide_height}")
+        guide.minsize(540, 560)
+        guide.configure(fg_color=self.COLORS["window"])
+        guide.transient(self)
+        guide.grid_columnconfigure(0, weight=1)
+        guide.grid_rowconfigure(1, weight=1)
 
-    # Header with Quick Back / Logout Controls
-    def build_header(self, parent):
-        header = tk.Frame(parent, bg=THEME["sidebar"], height=65, highlightbackground=THEME["card_border"], highlightthickness=1)
-        header.pack(fill=tk.X)
-        header.pack_propagate(False)
-
-        context = "Faculty advising" if self.authenticated_user["role"] == "Faculty" else "Student workspace"
-        tk.Label(header, text=context, font=("Segoe UI", 10, "bold"), fg=THEME["text_secondary"], bg=THEME["sidebar"]).pack(side=tk.LEFT, padx=25)
-
-        # User Profile Actions
-        profile_frame = tk.Frame(header, bg=THEME["sidebar"])
-        profile_frame.pack(side=tk.RIGHT, padx=25)
-
-        u_info = f"{self.authenticated_user['name']} | ID: {self.authenticated_user['id']}"
-        tk.Label(profile_frame, text=u_info, font=("Segoe UI", 9, "bold"), fg=THEME["text_primary"], bg=THEME["sidebar"]).pack(side=tk.LEFT, padx=(0, 15))
-
-        logout_btn = tk.Button(
-            profile_frame,
-            text="Sign out",
-            font=("Segoe UI", 9, "bold"),
-            bg="#fef2f2",
-            fg=THEME["danger"],
-            activebackground="#fee2e2",
-            activeforeground=THEME["danger"],
-            bd=1,
-            relief="solid",
-            padx=12,
-            pady=3,
-            cursor="hand2",
-            command=self.show_login_screen
+        header = ctk.CTkFrame(
+            guide,
+            fg_color="#142D50",
+            corner_radius=0,
         )
-        logout_btn.pack(side=tk.LEFT)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text="Your EduTrack quick guide",
+            font=app_font(family="Segoe UI", size=22, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 4))
+        ctk.CTkLabel(
+            header,
+            text="A short tour of your academic workspace and its main tools.",
+            font=app_font(family="Segoe UI", size=11),
+            text_color="#C3D5EB",
+        ).grid(row=1, column=0, sticky="w", padx=24, pady=(0, 20))
 
-    def clear_content(self):
-        for widget in self.content_area.winfo_children():
-            widget.destroy()
+        content = ctk.CTkScrollableFrame(
+            guide,
+            fg_color="transparent",
+            corner_radius=0,
+            scrollbar_button_color=self.COLORS["border"],
+        )
+        content.grid(row=1, column=0, sticky="nsew", padx=18, pady=16)
+        content.grid_columnconfigure(0, weight=1)
+        self._register_smooth_scroll(content)
 
-    # ==========================================
-    # 3. INTERACTIVE DASHBOARD VIEWS
-    # ==========================================
-    def create_stat_card(self, parent, title, value, subtitle="", border_accent="#2563eb"):
-        card = tk.Frame(parent, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1)
-        card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6)
+        self._guide_section(
+            content,
+            "01",
+            "Start at Dashboard",
+            (
+                "Your Dashboard is the academic snapshot. Current CGPA is calculated "
+                "from your graded courses using their credit hours. Completed Credits "
+                "counts credits with valid grades; the goal card shows your saved "
+                "graduation target. Semester Trend compares your weighted GPA by term, "
+                "and Quick Insights highlights courses that may need extra attention."
+            ),
+        )
+        self._guide_section(
+            content,
+            "02",
+            "Plan your trajectory",
+            (
+                "Choose Trajectory Planner in the sidebar. The fields start with values "
+                "from your academic record and saved goal. Enter a current CGPA and "
+                "target from 0.00 to 4.00, plus completed and remaining credits, then "
+                "select Calculate required GPA. The result is the average GPA needed "
+                "across the remaining credits; a result over 4.00 is above the grading "
+                "scale. Use What-if Scenario below to drag between 2.00 and 4.00 and "
+                "instantly estimate the resulting graduation CGPA."
+            ),
+        )
+        self._guide_section(
+            content,
+            "03",
+            "Calculate semester and cumulative GPA",
+            (
+                "Open Semester Calculator, add subjects to each semester, and choose "
+                "a BUBT letter grade with the subject's credit value. Semester GPA "
+                "and overall CGPA update as you edit. Subject names are optional; "
+                "blank credits are ignored, and credits must be positive numbers."
+            ),
+        )
+        self._guide_section(
+            content,
+            "04",
+            "Ask the AI Advisor",
+            (
+                "Open AI Advisor, type a question in the prompt box, and select Get "
+                "academic guidance. The response uses your available CGPA and courses "
+                "to watch. Add a Gemini API key in Settings for cloud responses; without "
+                "one, EduTrack uses its local guidance fallback."
+            ),
+        )
+        self._guide_section(
+            content,
+            "05",
+            "Review Analytics",
+            (
+                "Analytics shows your overall graded-credit summary, semester GPA "
+                "trend, and letter-grade distribution. If a chart has no data, check "
+                "that graded course records are available for your student ID."
+            ),
+        )
+        self._guide_section(
+            content,
+            "06",
+            "Update Settings",
+            (
+                "Open Settings to change your display name, current semester, total "
+                "program credits, target CGPA, or optional Gemini API key. Select Save "
+                "settings to store changes locally. The dashboard refreshes with your "
+                "new target and credit total. Your account's Student ID is read-only."
+            ),
+        )
+        self._guide_section(
+            content,
+            "07",
+            "Switch users",
+            (
+                "Select Sign out at the bottom of the sidebar to return to the sign-in "
+                "screen. Your saved profile settings remain in the local database."
+            ),
+        )
 
-        top_line = tk.Frame(card, bg=border_accent, height=3)
-        top_line.pack(fill=tk.X)
+        footer = ctk.CTkFrame(
+            guide,
+            fg_color=self.COLORS["surface"],
+            corner_radius=0,
+        )
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
+        close_button = ctk.CTkButton(
+            footer,
+            text="Close guide",
+            width=130,
+            height=40,
+            corner_radius=10,
+            font=app_font(family="Segoe UI", size=11, weight="bold"),
+            command=guide.destroy,
+        )
+        self._enable_button_transition(
+            close_button, self.COLORS["blue"], "#2563EB"
+        )
+        close_button.grid(row=0, column=0, sticky="e", padx=20, pady=14)
+        guide.protocol("WM_DELETE_WINDOW", guide.destroy)
+        guide.bind("<Escape>", lambda _event: guide.destroy())
+        guide.update_idletasks()
+        guide_width = guide.winfo_width()
+        guide_height = guide.winfo_height()
+        app_x = self.winfo_rootx()
+        app_y = self.winfo_rooty()
+        app_width = self.winfo_width()
+        app_height = self.winfo_height()
+        guide_frame_x = guide.winfo_rootx() - guide.winfo_x()
+        guide_frame_y = guide.winfo_rooty() - guide.winfo_y()
+        x = app_x + (app_width - guide_width) // 2 - guide_frame_x
+        y = app_y + (app_height - guide_height) // 2 - guide_frame_y
+        screen_width = guide.winfo_screenwidth()
+        screen_height = guide.winfo_screenheight()
+        x = max(0, min(x, screen_width - guide_width))
+        y = max(0, min(y, screen_height - guide_height))
+        guide.geometry(f"{guide_width}x{guide_height}+{x}+{y}")
+        guide.after(80, guide.focus_force)
 
-        inner = tk.Frame(card, bg=THEME["card"], padx=15, pady=15)
-        inner.pack(fill=tk.BOTH, expand=True)
+    def _guide_section(
+        self,
+        parent: ctk.CTkFrame,
+        number: str,
+        title: str,
+        description: str,
+    ) -> None:
+        """Render one numbered section of the quick-start guide."""
+        section = self._card(parent)
+        section.pack(fill="x", pady=(0, 10))
+        section.grid_columnconfigure(1, weight=1)
+        number_badge = ctk.CTkLabel(
+            section,
+            text=number,
+            width=36,
+            height=36,
+            corner_radius=11,
+            fg_color="#1D3B67",
+            text_color=self.COLORS["cyan"],
+            font=app_font(family="Segoe UI", size=11, weight="bold"),
+        )
+        number_badge.grid(row=0, column=0, sticky="nw", padx=(15, 12), pady=15)
+        ctk.CTkLabel(
+            section,
+            text=title,
+            font=app_font(family="Segoe UI", size=13, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 15), pady=(15, 5))
+        ctk.CTkLabel(
+            section,
+            text=description,
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=510,
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=1, sticky="ew", padx=(0, 15), pady=(0, 16))
 
-        tk.Label(inner, text=title, font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-        value_label = tk.Label(inner, text=value, font=("Segoe UI", 20, "bold"), fg=THEME["text_primary"], bg=THEME["card"])
-        value_label.pack(anchor="w", pady=4)
-        subtitle_label = None
-        if subtitle:
-            subtitle_label = tk.Label(inner, text=subtitle, font=("Segoe UI", 8), fg=THEME["text_secondary"], bg=THEME["card"])
-            subtitle_label.pack(anchor="w")
-        return value_label, subtitle_label
+    def _enable_button_transition(
+        self,
+        button: ctk.CTkButton,
+        base_color: str,
+        hover_color: str,
+    ) -> None:
+        """Replace abrupt widget hover with a short foreground color transition."""
+        button.configure(hover=False, fg_color=base_color)
+        self._button_hover_states[button] = (base_color, hover_color)
+        button.bind(
+            "<Enter>",
+            lambda _event, target=button: self._animate_button_color(
+                target, self._button_hover_states[target][1]
+            ),
+            add="+",
+        )
+        button.bind(
+            "<Leave>",
+            lambda _event, target=button: self._animate_button_color(
+                target, self._button_hover_states[target][0]
+            ),
+            add="+",
+        )
 
-    def show_dashboard_view(self):
-        self.clear_content()
-        try:
-            from modules.crud import AcademicCRUD
-            enrollments = AcademicCRUD.get_student_enrollments(self.authenticated_user["id"]) or []
-        except Exception as error:
-            print(f"Unable to load dashboard enrollments: {error}")
-            enrollments = []
-
-        valid_records = []
-        semester_totals = {}
-        total_credits = 0.0
-        total_grade_points = 0.0
-        for record in enrollments:
+    def _animate_button_color(self, button: ctk.CTkButton, target_color: str) -> None:
+        """Interpolate button foreground colors without queuing stale animations."""
+        previous_job = self._button_color_jobs.pop(button, None)
+        if previous_job is not None:
             try:
-                credits = float(record["credit_hours"])
-                grade_point = float(record["grade_point"])
-                semester = str(record["semester_no"])
-                if credits <= 0 or grade_point < 0:
-                    continue
-            except (KeyError, TypeError, ValueError):
-                continue
+                button.after_cancel(previous_job)
+            except tk.TclError:
+                pass
 
-            valid_records.append((record, credits, grade_point))
-            total_credits += credits
-            total_grade_points += credits * grade_point
-            semester_total = semester_totals.setdefault(semester, [0.0, 0.0])
-            semester_total[0] += credits * grade_point
-            semester_total[1] += credits
+        current_color = button.cget("fg_color")
+        if isinstance(current_color, tuple):
+            current_color = current_color[1]
+        if not isinstance(current_color, str) or not current_color.startswith("#"):
+            current_color = self._button_hover_states[button][0]
 
-        current_cgpa = total_grade_points / total_credits if total_credits else None
-        program_credits = 142
-        target_cgpa = 3.85
-        remaining_credits = max(program_credits - total_credits, 0)
+        try:
+            start = tuple(int(current_color[index : index + 2], 16) for index in (1, 3, 5))
+            end = tuple(int(target_color[index : index + 2], 16) for index in (1, 3, 5))
+        except (ValueError, IndexError):
+            button.configure(fg_color=target_color)
+            return
 
-        heading = tk.Frame(self.content_area, bg=THEME["bg"])
-        heading.pack(fill=tk.X, pady=(0, 14))
-        tk.Label(heading, text="STUDENT OVERVIEW  /  ACADEMIC YEAR", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["bg"]).pack(anchor="w")
-        tk.Label(heading, text="Your academic journey", font=("Segoe UI", 21, "bold"), fg=THEME["text_primary"], bg=THEME["bg"]).pack(anchor="w", pady=(3, 0))
-
-        goal_banner = tk.Frame(self.content_area, bg="#164b70", height=122, padx=22, pady=15)
-        goal_banner.pack(fill=tk.X, pady=(0, 14))
-        goal_banner.pack_propagate(False)
-        tk.Label(goal_banner, text="PLAN YOUR FINISH", font=("Segoe UI", 8, "bold"), fg="#c4e2f1", bg="#164b70").pack(anchor="w")
-        tk.Label(goal_banner, text="Small, steady progress adds up.", font=("Segoe UI", 17, "bold"), fg="white", bg="#164b70").pack(anchor="w", pady=(3, 0))
-        tk.Label(goal_banner, text="Adjust your graduation goal to see the pace your remaining credits require.", font=("Segoe UI", 9), fg="#c4e2f1", bg="#164b70").pack(anchor="w", pady=(2, 0))
-
-        goal_control = tk.Frame(goal_banner, bg="#23658e", padx=14, pady=8)
-        goal_control.place(relx=1.0, rely=0.5, anchor="e", relwidth=0.31, relheight=0.82)
-        tk.Label(goal_control, text="GRADUATION GOAL", font=("Segoe UI", 8, "bold"), fg="#c4e2f1", bg="#23658e").pack(anchor="w")
-        target_value_label = tk.Label(goal_control, text=f"{target_cgpa:.2f}", font=("Segoe UI", 17, "bold"), fg="#bcecff", bg="#23658e")
-        target_value_label.pack(side=tk.RIGHT, anchor="e")
-        target_slider = tk.Scale(goal_control, from_=3.0, to=4.0, resolution=0.05, orient=tk.HORIZONTAL, showvalue=False, bg="#23658e", fg="white", highlightthickness=0, troughcolor="#78a8c1", activebackground="#bcecff", bd=0, length=180)
-        target_slider.set(target_cgpa)
-        target_slider.pack(fill=tk.X, pady=(0, 0))
-
-        stats_frame = tk.Frame(self.content_area, bg=THEME["bg"])
-        stats_frame.pack(fill=tk.X, pady=(0, 14))
-        cgpa_value, cgpa_detail = self.create_stat_card(
-            stats_frame,
-            "CURRENT CGPA",
-            f"{current_cgpa:.2f}" if current_cgpa is not None else "--",
-            "Weighted from recorded courses" if current_cgpa is not None else "No graded courses found",
-            THEME["success"],
-        )
-        credits_value, credits_detail = self.create_stat_card(
-            stats_frame,
-            "CREDITS COMPLETED",
-            f"{total_credits:g} / {program_credits:g}",
-            f"{max(program_credits - total_credits, 0):g} credits remaining",
-            THEME["accent"],
-        )
-        target_card_value, target_card_detail = self.create_stat_card(
-            stats_frame,
-            "TARGET CGPA",
-            f"{target_cgpa:.2f}",
-            "Graduation goal",
-            THEME["warning"],
-        )
-        required_value, required_detail = self.create_stat_card(
-            stats_frame,
-            "REQUIRED FUTURE GPA",
-            "--",
-            "Add grades to calculate your pace",
-            THEME["danger"],
-        )
-
-        def update_goal(value):
-            target = float(value)
-            target_value_label.configure(text=f"{target:.2f}")
-            target_card_value.configure(text=f"{target:.2f}")
-            if current_cgpa is None:
-                required_value.configure(text="--")
-                required_detail.configure(text="Add grades to calculate your pace")
-            elif remaining_credits == 0:
-                required_value.configure(text="Done")
-                required_detail.configure(text="All program credits recorded")
-            else:
-                required = (target * program_credits - total_grade_points) / remaining_credits
-                required_value.configure(text=f"{required:.2f}")
-                required_detail.configure(text="Above 4.00; revise goal" if required > 4.0 else "Average across remaining credits")
-
-        target_slider.configure(command=update_goal)
-        update_goal(target_slider.get())
-
-        workspace = tk.Frame(self.content_area, bg=THEME["bg"])
-        workspace.pack(fill=tk.BOTH, expand=True)
-        workspace.grid_rowconfigure(0, weight=1)
-        workspace.grid_columnconfigure(0, weight=7)
-        workspace.grid_columnconfigure(1, weight=5)
-
-        trend_panel = tk.Frame(workspace, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=18, pady=15)
-        trend_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        tk.Label(trend_panel, text="SEMESTER PERFORMANCE", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(trend_panel, text="Your grade trend", font=("Segoe UI", 14, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(3, 0))
-        trend_chart = tk.Canvas(trend_panel, height=180, bg=THEME["card"], highlightthickness=0)
-        trend_chart.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-
-        ordered_semesters = sorted(
-            semester_totals.items(),
-            key=lambda item: (0, int(item[0])) if item[0].isdigit() else (1, item[0]),
-        )
-
-        def draw_semester_trend(event=None):
-            trend_chart.delete("all")
-            width = max(trend_chart.winfo_width(), 300)
-            height = max(trend_chart.winfo_height(), 150)
-            left, right, top, bottom = 34, width - 12, 15, height - 28
-            if not ordered_semesters:
-                trend_chart.create_text(width / 2, height / 2 - 8, text="No academic records yet", fill=THEME["text_primary"], font=("Segoe UI", 11, "bold"))
-                trend_chart.create_text(width / 2, height / 2 + 15, text="Semester results will appear here", fill=THEME["text_secondary"], font=("Segoe UI", 9))
+        def step(frame: int = 1) -> None:
+            if not button.winfo_exists():
+                self._button_color_jobs.pop(button, None)
                 return
+            progress = min(frame / 6, 1)
+            color = "#" + "".join(
+                f"{round(begin + (finish - begin) * progress):02X}"
+                for begin, finish in zip(start, end)
+            )
+            button.configure(fg_color=color)
+            if frame < 6:
+                self._button_color_jobs[button] = button.after(18, step, frame + 1)
+            else:
+                self._button_color_jobs.pop(button, None)
 
-            for grade in (0, 1, 2, 3, 4):
-                y = bottom - grade * (bottom - top) / 4
-                trend_chart.create_line(left, y, right, y, fill=THEME["card_border"])
-                trend_chart.create_text(left - 8, y, text=f"{grade}.0", fill=THEME["text_secondary"], font=("Segoe UI", 7), anchor="e")
-            slot = (right - left) / len(ordered_semesters)
-            bar_width = min(36, slot * 0.52)
-            for index, (semester, totals) in enumerate(ordered_semesters):
-                average = totals[0] / totals[1]
-                x = left + slot * (index + 0.5)
-                y = bottom - min(average, 4.0) * (bottom - top) / 4
-                trend_chart.create_rectangle(x - bar_width / 2, y, x + bar_width / 2, bottom, fill=THEME["accent"], outline="")
-                trend_chart.create_text(x, y - 9, text=f"{average:.2f}", fill=THEME["text_primary"], font=("Segoe UI", 8, "bold"))
-                trend_chart.create_text(x, bottom + 14, text=f"Sem {semester}", fill=THEME["text_secondary"], font=("Segoe UI", 7))
+        step()
 
-        trend_chart.bind("<Configure>", draw_semester_trend)
+    def _set_button_hover_base(self, button: ctk.CTkButton, color: str) -> None:
+        """Keep the selected navigation item consistent when it is hovered."""
+        _, hover_color = self._button_hover_states[button]
+        self._button_hover_states[button] = (color, hover_color)
 
-        focus_panel = tk.Frame(workspace, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=18, pady=15)
-        focus_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        tk.Label(focus_panel, text="ACADEMIC FOCUS", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(focus_panel, text="Your next best step", font=("Segoe UI", 14, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(3, 12))
-        if valid_records:
-            weakest_record, weakest_credits, weakest_grade = min(valid_records, key=lambda item: item[2])
-            tk.Label(focus_panel, text="COURSE TO REVIEW", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-            tk.Label(focus_panel, text=weakest_record.get("course_code", "Course"), font=("Segoe UI", 19, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(4, 0))
-            tk.Label(focus_panel, text=weakest_record.get("course_title", "Recorded course"), font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=250, justify="left").pack(anchor="w", pady=(2, 10))
-            tk.Label(focus_panel, text=f"Grade point  {weakest_grade:.2f}     ·     {weakest_credits:g} credits", font=("Segoe UI", 9, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-            tk.Label(focus_panel, text="Give this course a little extra review time as you plan your next study week.", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=255, justify="left").pack(anchor="w", pady=(13, 0))
-        else:
-            tk.Label(focus_panel, text="Your records will power this space", font=("Segoe UI", 11, "bold"), fg=THEME["text_primary"], bg=THEME["card"], wraplength=260, justify="left").pack(anchor="w", pady=(7, 6))
-            tk.Label(focus_panel, text="Once course grades are available, EduTrack will highlight where a focused review can make the biggest difference.", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=260, justify="left").pack(anchor="w")
+    def _show_header_status(self, text: str, color: str, reset_after: int = 0) -> None:
+        if self._status_reset_job is not None:
+            try:
+                self.after_cancel(self._status_reset_job)
+            except tk.TclError:
+                pass
+            self._status_reset_job = None
+        self.header_status.configure(text=text, text_color=color)
+        if reset_after:
+            self._status_reset_job = self.after(
+                reset_after, self._restore_header_status
+            )
 
-    def show_faculty_dashboard(self):
-        self.clear_content()
-
-        heading = tk.Frame(self.content_area, bg=THEME["bg"])
-        heading.pack(fill=tk.X, pady=(0, 18))
-        tk.Label(heading, text="FACULTY WORKSPACE  /  STUDENT SUPPORT", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["bg"]).pack(anchor="w")
-        tk.Label(heading, text="Student review", font=("Segoe UI", 23, "bold"), fg=THEME["text_primary"], bg=THEME["bg"]).pack(anchor="w", pady=(3, 2))
-        tk.Label(heading, text="Look up a student to review their course history and plan an advising conversation.", font=("Segoe UI", 10), fg=THEME["text_secondary"], bg=THEME["bg"]).pack(anchor="w")
-
-        lookup_panel = tk.Frame(self.content_area, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=20, pady=18)
-        lookup_panel.pack(fill=tk.X, pady=(0, 16))
-        tk.Label(lookup_panel, text="STUDENT ID", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(0, 7))
-        search_row = tk.Frame(lookup_panel, bg=THEME["card"])
-        search_row.pack(fill=tk.X)
-        search_shell = tk.Frame(search_row, bg=THEME["input_bg"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=12, pady=2)
-        search_shell.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        self.faculty_lookup_entry = tk.Entry(search_shell, font=("Segoe UI", 11), bg=THEME["input_bg"], fg=THEME["text_primary"], insertbackground=THEME["accent"], bd=0, relief=tk.FLAT)
-        self.faculty_lookup_entry.pack(fill=tk.X, ipady=8)
-        self.faculty_lookup_entry.bind("<Return>", lambda event: self.load_faculty_student())
-        lookup_button = tk.Button(search_row, text="Review student  →", font=("Segoe UI", 9, "bold"), bg=THEME["accent"], fg="white", activebackground=THEME["accent_hover"], activeforeground="white", bd=0, padx=18, pady=11, cursor="hand2", command=self.load_faculty_student)
-        lookup_button.pack(side=tk.RIGHT)
-        lookup_button.bind("<Enter>", lambda event: lookup_button.configure(bg=THEME["accent_hover"]))
-        lookup_button.bind("<Leave>", lambda event: lookup_button.configure(bg=THEME["accent"]))
-        self.faculty_status = tk.Label(lookup_panel, text="", font=("Segoe UI", 9), fg=THEME["danger"], bg=THEME["card"], anchor="w")
-        self.faculty_status.pack(fill=tk.X, pady=(7, 0))
-
-        self.faculty_results = tk.Frame(self.content_area, bg=THEME["bg"])
-        self.faculty_results.pack(fill=tk.BOTH, expand=True)
-        empty_panel = tk.Frame(self.faculty_results, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=24, pady=28)
-        empty_panel.pack(fill=tk.BOTH, expand=True)
-        tk.Label(empty_panel, text="READY TO REVIEW", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(empty_panel, text="A student record, in one place.", font=("Segoe UI", 17, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(6, 3))
-        tk.Label(empty_panel, text="Course grades, credit progress and the student's strongest review priorities will appear here.", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=620, justify="left").pack(anchor="w")
-        self.faculty_lookup_entry.focus_set()
-
-    def load_faculty_student(self):
-        student_id = self.faculty_lookup_entry.get().strip()
-        self.faculty_status.configure(text="")
-        for widget in self.faculty_results.winfo_children():
-            widget.destroy()
-        if not student_id:
-            self.faculty_status.configure(text="Enter a student ID to search.")
+    def _restore_header_status(self) -> None:
+        self._status_reset_job = None
+        if not self.winfo_exists():
             return
+        self.header_status.configure(
+            text="●  DATA CONNECTION ISSUE" if self.data_error else "●  LIVE WORKSPACE",
+            text_color=self.COLORS["amber"] if self.data_error else self.COLORS["green"],
+        )
 
+    def _update_profile_badge(self) -> None:
+        for child in self.profile_badge.winfo_children():
+            child.destroy()
+        initials = "".join(
+            part[0] for part in self.student["name"].split()[:2] if part
+        ).upper() or "S"
+        avatar = ctk.CTkFrame(
+            self.profile_badge,
+            width=38,
+            height=38,
+            corner_radius=12,
+            fg_color="#1D3B67",
+        )
+        avatar.grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12)
+        avatar.grid_propagate(False)
+        ctk.CTkLabel(
+            avatar,
+            text=initials,
+            font=app_font(family="Segoe UI", size=13, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(
+            self.profile_badge,
+            text=self.student["name"],
+            font=app_font(family="Segoe UI", size=12, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+            width=164,
+            wraplength=164,
+            justify="left",
+        ).grid(row=0, column=1, sticky="sw", padx=(0, 10), pady=(12, 0))
+        ctk.CTkLabel(
+            self.profile_badge,
+            text=f"{self.student['role'].upper()}  /  {self.student['student_id']}",
+            font=app_font(family="Segoe UI", size=8, weight="bold"),
+            text_color=self.COLORS["muted"],
+            anchor="w",
+            width=164,
+            wraplength=164,
+        ).grid(row=1, column=1, sticky="nw", padx=(0, 10), pady=(2, 12))
+        self.profile_badge.grid_columnconfigure(1, weight=1)
+
+    def sign_out(self) -> None:
+        """Return to the login window in a fresh process."""
+        login_path = os.path.join(os.path.dirname(__file__), "auth_ui.py")
+        try:
+            subprocess.Popen(
+                [sys.executable, login_path],
+                cwd=os.path.dirname(login_path),
+                env=os.environ.copy(),
+            )
+        except OSError as exc:
+            self.header_status.configure(
+                text=f"COULD NOT OPEN SIGN IN: {exc}",
+                text_color=self.COLORS["red"],
+            )
+            return
+        self.destroy()
+
+    def _load_student_data(self) -> None:
+        """Load the signed-in profile and grades from the initialized database."""
         try:
             from modules.crud import AcademicCRUD
-            records = AcademicCRUD.get_student_enrollments(student_id) or []
-        except Exception as error:
-            print(f"Unable to load student record: {error}")
-            records = []
 
-        if not records:
-            empty_panel = tk.Frame(self.faculty_results, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=24, pady=24)
-            empty_panel.pack(fill=tk.BOTH, expand=True)
-            tk.Label(empty_panel, text="No course records found", font=("Segoe UI", 15, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w")
-            tk.Label(empty_panel, text=f"No enrollments are available for student ID {student_id}.", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(5, 0))
-            return
+            profile = AcademicCRUD.get_student_profile(self.student["student_id"])
+            if profile is not None:
+                self.student["name"] = profile["name"]
+                self.student["semester"] = profile["current_semester"]
+                self.program_credits = float(profile["program_credits"])
+                self.target_cgpa = float(profile["target_cgpa"])
+            settings = AcademicCRUD.get_user_settings(self.student["student_id"])
+            self.student["name"] = settings["display_name"]
+            self.student["semester"] = settings["current_semester"]
+            self.program_credits = float(settings["program_credits"])
+            self.target_cgpa = float(settings["target_cgpa"])
+            self.gemini_api_key = settings["gemini_api_key"]
+            self.enrollments = AcademicCRUD.get_student_enrollments(
+                self.student["student_id"]
+            )
+            self.data_error = None
+        except Exception as exc:
+            self.enrollments = []
+            self.data_error = str(exc)
 
-        total_credits = 0.0
-        graded_credits = 0.0
-        grade_points = 0.0
-        for record in records:
+    def _summary(self) -> dict[str, Any]:
+        """Compute weighted GPA, credit totals, and course/semester insights."""
+        from modules.grading import grade_point_for_enrollment
+
+        graded: list[tuple[dict[str, Any], float, float]] = []
+        semesters: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        grade_counts: Counter[str] = Counter()
+        for record in self.enrollments:
             try:
                 credits = float(record["credit_hours"])
-                total_credits += credits
-                if record.get("grade_point") is not None:
-                    grade_point = float(record["grade_point"])
-                    grade_points += credits * grade_point
-                    graded_credits += credits
-            except (KeyError, TypeError, ValueError):
-                continue
-
-        current_cgpa = grade_points / graded_credits if graded_credits else None
-        result_heading = tk.Frame(self.faculty_results, bg=THEME["bg"])
-        result_heading.pack(fill=tk.X, pady=(0, 10))
-        tk.Label(result_heading, text="STUDENT RECORD", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["bg"]).pack(anchor="w")
-        tk.Label(result_heading, text=f"Student ID  {student_id}", font=("Segoe UI", 15, "bold"), fg=THEME["text_primary"], bg=THEME["bg"]).pack(anchor="w", pady=(3, 0))
-
-        summary = tk.Frame(self.faculty_results, bg=THEME["bg"])
-        summary.pack(fill=tk.X, pady=(0, 12))
-        self.create_stat_card(summary, "SELECTED STUDENT · CGPA", f"{current_cgpa:.2f}" if current_cgpa is not None else "--", "Calculated from graded courses", THEME["success"])
-        self.create_stat_card(summary, "CREDITS ON RECORD", f"{total_credits:g}", "Across listed enrollments", THEME["accent"])
-        self.create_stat_card(summary, "COURSES REVIEWED", str(len(records)), "Course enrollment records", THEME["warning"])
-
-        course_panel = tk.Frame(self.faculty_results, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=12, pady=10)
-        course_panel.pack(fill=tk.BOTH, expand=True)
-        tk.Label(course_panel, text="COURSE HISTORY", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", padx=4, pady=(0, 8))
-        style = ttk.Style(self.root)
-        style.configure("EduTrack.Treeview", background=THEME["card"], foreground=THEME["text_primary"], fieldbackground=THEME["card"], rowheight=29, font=("Segoe UI", 9), borderwidth=0)
-        style.configure("EduTrack.Treeview.Heading", background=THEME["input_bg"], foreground=THEME["text_primary"], font=("Segoe UI", 8, "bold"), relief="flat")
-        style.map("EduTrack.Treeview", background=[("selected", THEME["sidebar_active"])], foreground=[("selected", THEME["text_primary"])])
-        columns = ("course", "title", "semester", "credits", "grade", "points")
-        course_table = ttk.Treeview(course_panel, columns=columns, show="headings", style="EduTrack.Treeview")
-        for column, title, width in (("course", "COURSE", 110), ("title", "COURSE TITLE", 260), ("semester", "SEMESTER", 90), ("credits", "CREDITS", 80), ("grade", "GRADE", 75), ("points", "GP", 70)):
-            course_table.heading(column, text=title)
-            course_table.column(column, width=width, anchor="w" if column in ("course", "title") else "center")
-        for record in records:
-            course_table.insert("", tk.END, values=(
-                record.get("course_code", ""),
-                record.get("course_title", ""),
-                record.get("semester_no", ""),
-                record.get("credit_hours", ""),
-                record.get("letter_grade") or "—",
-                record.get("grade_point") if record.get("grade_point") is not None else "—",
-            ))
-        course_table.pack(fill=tk.BOTH, expand=True)
-
-    def get_student_enrollments(self):
-        try:
-            from modules.crud import AcademicCRUD
-            return AcademicCRUD.get_student_enrollments(self.authenticated_user["id"]) or []
-        except Exception as error:
-            print(f"Unable to load student enrollments: {error}")
-            return []
-
-    def summarize_enrollments(self, enrollments):
-        graded_records = []
-        semester_totals = {}
-        completed_credits = 0.0
-        total_grade_points = 0.0
-        for record in enrollments:
-            try:
-                credits = float(record["credit_hours"])
-                grade_point = float(record["grade_point"])
-                semester = str(record["semester_no"])
-                if credits <= 0 or not 0 <= grade_point <= 4:
+                grade_point = grade_point_for_enrollment(record)
+                if (
+                    not math.isfinite(credits)
+                    or credits <= 0
+                    or grade_point is None
+                ):
                     continue
             except (KeyError, TypeError, ValueError):
                 continue
-            graded_records.append((record, credits, grade_point))
-            completed_credits += credits
-            total_grade_points += credits * grade_point
-            totals = semester_totals.setdefault(semester, [0.0, 0.0])
-            totals[0] += credits * grade_point
-            totals[1] += credits
+            graded.append((record, credits, grade_point))
+            semester = str(record.get("semester_no", "Unknown"))
+            semesters[semester][0] += credits * grade_point
+            semesters[semester][1] += credits
+            letter_grade = str(record.get("letter_grade") or "").strip().upper()
+            if letter_grade:
+                grade_counts[letter_grade] += 1
+
+        completed = sum(credits for _, credits, _ in graded)
+        grade_points = sum(credits * grade for _, credits, grade in graded)
+        cgpa = grade_points / completed if completed else None
+        weak_courses = [
+            record
+            for record, _, grade in graded
+            if grade < 2.5
+        ]
+        semester_averages = {
+            semester: totals[0] / totals[1]
+            for semester, totals in semesters.items()
+            if totals[1]
+        }
         return {
-            "graded_records": graded_records,
-            "completed_credits": completed_credits,
-            "cgpa": total_grade_points / completed_credits if completed_credits else None,
-            "semester_averages": {
-                semester: totals[0] / totals[1]
-                for semester, totals in semester_totals.items()
-                if totals[1]
-            },
-            "weak_courses": [record.get("course_code", "Course") for record, _, grade in graded_records if grade < 2.5],
+            "cgpa": cgpa,
+            "completed_credits": completed,
+            "remaining_credits": max(self.program_credits - completed, 0.0),
+            "grade_points": grade_points,
+            "graded_courses": graded,
+            "weak_courses": weak_courses,
+            "semester_averages": semester_averages,
+            "grade_counts": grade_counts,
         }
 
-    def create_page_header(self, eyebrow, title, description):
-        header = tk.Frame(self.content_area, bg=THEME["bg"])
-        header.pack(fill=tk.X, pady=(0, 18))
-        tk.Label(header, text=eyebrow.upper(), font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["bg"]).pack(anchor="w")
-        tk.Label(header, text=title, font=("Segoe UI", 22, "bold"), fg=THEME["text_primary"], bg=THEME["bg"]).pack(anchor="w", pady=(3, 2))
-        tk.Label(header, text=description, font=("Segoe UI", 10), fg=THEME["text_secondary"], bg=THEME["bg"], wraplength=780, justify="left").pack(anchor="w")
+    def show_page(self, page: str) -> None:
+        """Show a cached page, constructing it only the first time it is visited."""
+        if page == self.current_page and page in self._page_frames:
+            return
+        previous_frame = self._page_frames.get(self.current_page or "")
+        if previous_frame is not None:
+            previous_frame.grid_remove()
+        for title, button in self.nav_buttons.items():
+            selected = title == page
+            base_color = (
+                self.COLORS["surface_alt"] if selected else self.COLORS["sidebar"]
+            )
+            button.configure(
+                fg_color=base_color,
+                text_color=self.COLORS["text"] if selected else self.COLORS["muted"],
+                border_color=(
+                    self.COLORS["border"] if selected else self.COLORS["sidebar"]
+                ),
+            )
+            self._set_button_hover_base(button, base_color)
+            self.nav_indicators[title].configure(
+                fg_color=self.COLORS["cyan"] if selected else "transparent"
+            )
 
-    def create_panel(self, parent, padx=18, pady=16):
-        return tk.Frame(parent, bg=THEME["card"], highlightbackground=THEME["card_border"], highlightthickness=1, padx=padx, pady=pady)
-
-    def show_predictor_view(self):
-        self.clear_content()
-        self.create_page_header("Trajectory planning", "Build your graduation target", "Test a CGPA goal against your completed and remaining credits.")
-        summary = self.summarize_enrollments(self.get_student_enrollments())
-
-        layout = tk.Frame(self.content_area, bg=THEME["bg"])
-        layout.pack(fill=tk.BOTH, expand=True)
-        layout.grid_columnconfigure(0, weight=6)
-        layout.grid_columnconfigure(1, weight=5)
-        input_panel = self.create_panel(layout, 20, 18)
-        input_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        result_panel = self.create_panel(layout, 22, 20)
-        result_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-
-        tk.Label(input_panel, text="YOUR PLANNING ASSUMPTIONS", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 15))
-        self.predictor_entries = {}
-        current_default = f"{summary['cgpa']:.2f}" if summary["cgpa"] is not None else "0.00"
-        completed_default = f"{summary['completed_credits']:g}"
-        remaining_default = f"{max(142 - summary['completed_credits'], 0):g}"
-        fields = (
-            ("Current CGPA", current_default, "current"),
-            ("Credits completed", completed_default, "completed"),
-            ("Target CGPA", "3.85", "target"),
-            ("Credits remaining", remaining_default, "remaining"),
+        self._show_header_status(
+            "●  DATA CONNECTION ISSUE" if self.data_error else "●  LIVE WORKSPACE",
+            self.COLORS["amber"] if self.data_error else self.COLORS["green"],
         )
-        for index, (label, value, key) in enumerate(fields):
-            row, column = 1 + index * 2, 0
-            tk.Label(input_panel, text=label, font=("Segoe UI", 9, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).grid(row=row, column=column, columnspan=2, sticky="w", pady=(0, 6))
-            entry = tk.Entry(input_panel, font=("Segoe UI", 11), bg=THEME["input_bg"], fg=THEME["text_primary"], insertbackground=THEME["accent"], relief=tk.FLAT, bd=0)
-            entry.insert(0, value)
-            entry.grid(row=row + 1, column=column, columnspan=2, sticky="ew", padx=(0, 12), ipady=10, pady=(0, 14))
-            self.predictor_entries[key] = entry
-        input_panel.grid_columnconfigure(0, weight=1)
-        input_panel.grid_columnconfigure(2, weight=1)
-        planning_note = "No graded records yet. Enter your current CGPA and completed credits to personalize this scenario." if summary["cgpa"] is None else "Starts from your recorded grades. Adjust any value to explore a different scenario."
-        tk.Label(input_panel, text=planning_note, font=("Segoe UI", 8), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=400, justify="left").grid(row=9, column=0, columnspan=4, sticky="w", pady=(0, 14))
-        calculate_button = tk.Button(input_panel, text="Calculate required GPA  →", font=("Segoe UI", 9, "bold"), bg=THEME["accent"], fg="white", activebackground=THEME["accent_hover"], activeforeground="white", bd=0, padx=18, pady=11, cursor="hand2", command=self.calculate_trajectory)
-        calculate_button.grid(row=10, column=0, columnspan=4, sticky="ew")
-        calculate_button.bind("<Enter>", lambda event: calculate_button.configure(bg=THEME["accent_hover"]))
-        calculate_button.bind("<Leave>", lambda event: calculate_button.configure(bg=THEME["accent"]))
-        self.predictor_status = tk.Label(input_panel, text="", font=("Segoe UI", 9), fg=THEME["danger"], bg=THEME["card"], anchor="w")
-        self.predictor_status.grid(row=11, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        title, subtitle = {
+            "Dashboard": (
+                "Your academic journey",
+                "A clear view of your progress, goals, and next steps.",
+            ),
+            "Trajectory Planner": (
+                "Trajectory planner",
+                "Explore the GPA pace needed to reach your graduation goal.",
+            ),
+            "Semester Calculator": (
+                "CGPA & semester calculator",
+                "Build semesters and calculate credit-weighted GPA as you enter grades.",
+            ),
+            "AI Advisor": (
+                "AI academic advisor",
+                "Get guidance informed by your academic record.",
+            ),
+            "Analytics": (
+                "Performance analytics",
+                "Review semester performance and the grades behind your CGPA.",
+            ),
+            "Settings": (
+                "Workspace settings",
+                "Manage the student profile and planning assumptions shown here.",
+            ),
+        }[page]
+        self.page_title.configure(text=title)
+        self.page_subtitle.configure(text=subtitle)
 
-        tk.Label(result_panel, text="PROJECTED STUDY PACE", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(result_panel, text="Required future GPA", font=("Segoe UI", 14, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(4, 12))
-        self.required_gpa_label = tk.Label(result_panel, text="--", font=("Segoe UI", 38, "bold"), fg=THEME["accent"], bg=THEME["card"])
-        self.required_gpa_label.pack(anchor="w")
-        self.required_gpa_note = tk.Label(result_panel, text="Run a scenario to see your target pace.", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=300, justify="left")
-        self.required_gpa_note.pack(anchor="w", pady=(3, 18))
-        self.gpa_meter = tk.Canvas(result_panel, height=12, bg=THEME["card"], highlightthickness=0)
-        self.gpa_meter.pack(fill=tk.X, pady=(0, 8))
-        self.gpa_meter.bind("<Configure>", lambda event: self.draw_gpa_meter(0))
-        tk.Label(result_panel, text="0.00", font=("Segoe UI", 8), fg=THEME["text_secondary"], bg=THEME["card"]).pack(side=tk.LEFT)
-        tk.Label(result_panel, text="4.00 maximum", font=("Segoe UI", 8), fg=THEME["text_secondary"], bg=THEME["card"]).pack(side=tk.RIGHT)
+        page_frame = self._page_frames.get(page)
+        if page_frame is None:
+            page_frame = ctk.CTkScrollableFrame(
+                self.page_host,
+                fg_color="transparent",
+                corner_radius=0,
+                scrollbar_button_color=self.COLORS["border"],
+            )
+            page_frame.grid(row=0, column=0, sticky="nsew")
+            page_frame.grid_columnconfigure(0, weight=1)
+            self._page_frames[page] = page_frame
+            self._register_smooth_scroll(page_frame)
+            builders = {
+                "Dashboard": self._build_dashboard,
+                "Trajectory Planner": self._build_planner,
+                "Semester Calculator": self._build_semester_calculator,
+                "AI Advisor": self._build_advisor,
+                "Analytics": self._build_analytics,
+                "Settings": self._build_settings,
+            }
+            builders[page](page_frame)
+        else:
+            page_frame.grid()
+        self.current_page = page
 
-    def calculate_trajectory(self):
+    def _register_smooth_scroll(self, frame: ctk.CTkScrollableFrame) -> None:
+        if frame not in self._scrollable_frames:
+            self._scrollable_frames.append(frame)
+
+    def _on_smooth_mousewheel(self, event: tk.Event) -> str | None:
         try:
-            current = float(self.predictor_entries["current"].get())
-            completed = float(self.predictor_entries["completed"].get())
-            target = float(self.predictor_entries["target"].get())
-            remaining = float(self.predictor_entries["remaining"].get())
-            if not 0 <= current <= 4 or not 0 <= target <= 4 or completed < 0 or remaining < 0:
+            pointer_widget = self.winfo_containing(event.x_root, event.y_root)
+        except tk.TclError:
+            return None
+        if pointer_widget is None:
+            return None
+        pointer_path = str(pointer_widget)
+
+        active_frame: ctk.CTkScrollableFrame | None = None
+        active_path_length = -1
+        for frame in self._scrollable_frames[:]:
+            try:
+                if not frame.winfo_exists():
+                    self._scrollable_frames.remove(frame)
+                    continue
+                frame_path = str(frame)
+                if (
+                    (pointer_path == frame_path or pointer_path.startswith(f"{frame_path}."))
+                    and len(frame_path) > active_path_length
+                ):
+                    active_frame = frame
+                    active_path_length = len(frame_path)
+            except tk.TclError:
+                self._scrollable_frames.remove(frame)
+
+        if active_frame is None:
+            return None
+
+        canvas = active_frame._parent_canvas
+        scroll_region = canvas.bbox("all")
+        if scroll_region is None:
+            return "break"
+        content_height = scroll_region[3] - scroll_region[1]
+        viewport_height = canvas.winfo_height()
+        max_offset = max(content_height - viewport_height, 0)
+        if max_offset <= 0:
+            return "break"
+
+        if event.num == 4:
+            pixel_delta = -48.0
+        elif event.num == 5:
+            pixel_delta = 48.0
+        elif sys.platform == "darwin":
+            pixel_delta = -float(event.delta) * 2.4
+        else:
+            pixel_delta = -float(event.delta) * (48.0 / 120.0)
+
+        self._pending_scroll_pixels[active_frame] = (
+            self._pending_scroll_pixels.get(active_frame, 0.0) + pixel_delta
+        )
+        if active_frame not in self._scroll_jobs:
+            self._scroll_jobs[active_frame] = active_frame.after(
+                8, lambda frame=active_frame: self._apply_smooth_scroll(frame)
+            )
+        return "break"
+
+    def _apply_smooth_scroll(self, frame: ctk.CTkScrollableFrame) -> None:
+        self._scroll_jobs.pop(frame, None)
+        pixel_delta = self._pending_scroll_pixels.pop(frame, 0.0)
+        try:
+            if not frame.winfo_exists() or not frame.winfo_ismapped():
+                return
+            canvas = frame._parent_canvas
+            scroll_region = canvas.bbox("all")
+            if scroll_region is None:
+                return
+            content_height = scroll_region[3] - scroll_region[1]
+            viewport_height = canvas.winfo_height()
+            max_offset = max(content_height - viewport_height, 0)
+            if max_offset <= 0:
+                return
+            current_offset = canvas.yview()[0] * content_height
+            next_offset = min(max(current_offset + pixel_delta, 0.0), max_offset)
+            canvas.yview_moveto(next_offset / content_height)
+        except tk.TclError:
+            self._pending_scroll_pixels.pop(frame, None)
+
+    def _discard_cached_pages(self) -> None:
+        for frame in self._page_frames.values():
+            try:
+                frame.destroy()
+            except tk.TclError:
+                continue
+        for frame, job in self._scroll_jobs.items():
+            try:
+                frame.after_cancel(job)
+            except tk.TclError:
+                pass
+        self._scroll_jobs.clear()
+        self._pending_scroll_pixels.clear()
+        for chart, job in self._chart_redraw_jobs.items():
+            try:
+                chart.after_cancel(job)
+            except tk.TclError:
+                pass
+        self._chart_redraw_jobs.clear()
+        self._page_frames.clear()
+        live_frames: list[ctk.CTkScrollableFrame] = []
+        for frame in self._scrollable_frames:
+            try:
+                if frame.winfo_exists():
+                    live_frames.append(frame)
+            except tk.TclError:
+                continue
+        self._scrollable_frames = live_frames
+        self.current_page = None
+
+    def _schedule_chart_redraw(
+        self, chart: ctk.CTkCanvas, draw: Any
+    ) -> None:
+        previous_job = self._chart_redraw_jobs.pop(chart, None)
+        if previous_job is not None:
+            try:
+                chart.after_cancel(previous_job)
+            except tk.TclError:
+                pass
+
+        def redraw() -> None:
+            self._chart_redraw_jobs.pop(chart, None)
+            try:
+                if chart.winfo_exists():
+                    draw()
+            except tk.TclError:
+                return
+
+        self._chart_redraw_jobs[chart] = chart.after(28, redraw)
+
+    def _card(self, parent: ctk.CTkFrame, **kwargs: Any) -> ctk.CTkFrame:
+        return ctk.CTkFrame(
+            parent,
+            fg_color=self.COLORS["surface"],
+            corner_radius=18,
+            border_width=1,
+            border_color=self.COLORS["border"],
+            **kwargs,
+        )
+
+    def _section_heading(
+        self, parent: ctk.CTkFrame, title: str, detail: str | None = None
+    ) -> None:
+        heading = ctk.CTkFrame(parent, fg_color="transparent")
+        heading.pack(fill="x", padx=20, pady=(18, 14))
+        ctk.CTkLabel(
+            heading,
+            text=title,
+            font=app_font(family="Segoe UI", size=15, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).pack(side="left")
+        if detail:
+            ctk.CTkLabel(
+                heading,
+                text=detail,
+                font=app_font(family="Segoe UI", size=10),
+                text_color=self.COLORS["muted"],
+            ).pack(side="right")
+
+    def _helper_text(self, parent: ctk.CTkFrame, text: str) -> None:
+        ctk.CTkLabel(
+            parent,
+            text=text,
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=850,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 16))
+
+    def _build_dashboard(self, parent: ctk.CTkFrame) -> None:
+        summary = self._summary()
+        banner = ctk.CTkFrame(
+            parent,
+            fg_color="#142D50",
+            corner_radius=18,
+            border_width=1,
+            border_color="#24456D",
+        )
+        banner.pack(fill="x", pady=(0, 22))
+        banner.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            banner,
+            text=f"GOOD TO SEE YOU, {self.student['name'].upper()}",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color="#AFCDF2",
+        ).grid(row=0, column=0, sticky="w", padx=26, pady=(23, 8))
+        ctk.CTkLabel(
+            banner,
+            text="Make your next semester count.",
+            font=app_font(family="Segoe UI", size=23, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).grid(row=1, column=0, sticky="w", padx=26)
+        ctk.CTkLabel(
+            banner,
+            text=f"{self.student['semester']}  |  {self.student['role'].upper()} WORKSPACE",
+            font=app_font(family="Segoe UI", size=11),
+            text_color="#C3D5EB",
+        ).grid(row=2, column=0, sticky="w", padx=26, pady=(8, 23))
+        ctk.CTkLabel(
+            banner,
+            text=f"{self.program_credits:g}\nCREDIT DEGREE",
+            font=app_font(family="Segoe UI", size=13, weight="bold"),
+            text_color=self.COLORS["cyan"],
+            justify="center",
+            fg_color="#1B3B63",
+            corner_radius=13,
+            padx=26,
+            pady=18,
+        ).grid(row=0, column=1, rowspan=3, padx=(16, 24), pady=22)
+
+        self._section_heading(parent, "At a glance", "YOUR ACADEMIC SNAPSHOT")
+        self._helper_text(
+            parent,
+            "Your cards summarize recorded grades and your saved graduation goal. "
+            "Use Trajectory Planner to explore a different GPA target.",
+        )
+        cards = ctk.CTkFrame(parent, fg_color="transparent")
+        cards.pack(fill="x", pady=(0, 24))
+        for column in range(4):
+            cards.grid_columnconfigure(column, weight=1, uniform="metric")
+        cgpa = summary["cgpa"]
+        completed = summary["completed_credits"]
+        metrics = (
+            (
+                "CURRENT CGPA",
+                f"{cgpa:.2f}" if cgpa is not None else "No grades",
+                "Weighted across graded courses",
+                cgpa / self.GRADE_SCALE if cgpa is not None else 0,
+                self.COLORS["blue"],
+                f"{cgpa:.2f} / 4.00" if cgpa is not None else "No graded records yet",
+            ),
+            (
+                "COMPLETED CREDITS",
+                f"{completed:g}",
+                f"of {self.program_credits:g} program credits",
+                min(completed / self.program_credits, 1) if self.program_credits else 0,
+                self.COLORS["cyan"],
+                f"{summary['remaining_credits']:g} credits remaining",
+            ),
+            (
+                "GRADUATION GOAL",
+                f"{self.target_cgpa:.2f}",
+                "Your target cumulative GPA",
+                self.target_cgpa / self.GRADE_SCALE,
+                self.COLORS["green"],
+                "Adjustable in Settings",
+            ),
+            (
+                "COURSES TO WATCH",
+                str(len(summary["weak_courses"])),
+                "Recorded below 2.50 grade points",
+                None,
+                self.COLORS["amber"] if summary["weak_courses"] else self.COLORS["green"],
+                "Review your focus list" if summary["weak_courses"] else "No alerts on record",
+            ),
+        )
+        for column, metric in enumerate(metrics):
+            self._metric_card(cards, column, *metric)
+
+        lower = ctk.CTkFrame(parent, fg_color="transparent")
+        lower.pack(fill="both", expand=True)
+        lower.grid_columnconfigure(0, weight=7, uniform="lower")
+        lower.grid_columnconfigure(1, weight=5, uniform="lower")
+        lower.grid_rowconfigure(0, weight=1)
+
+        trend_card = self._card(lower)
+        trend_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self._section_heading(trend_card, "Semester trend", "WEIGHTED GPA")
+        self._draw_semester_trend(trend_card, summary["semester_averages"])
+
+        insights = self._card(lower)
+        insights.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        self._section_heading(insights, "Quick insights", "YOUR NEXT STEP")
+        if summary["weak_courses"]:
+            for record in summary["weak_courses"][:3]:
+                course = record.get("course_code", "Course")
+                grade = record.get("letter_grade") or record.get("grade_point", "")
+                self._insight_row(
+                    insights,
+                    "FOCUS",
+                    f"{course}  |  {grade}",
+                    "Consider giving this course extra review time.",
+                    self.COLORS["amber"],
+                )
+        elif summary["cgpa"] is not None:
+            self._insight_row(
+                insights,
+                "ON TRACK",
+                "Keep your semester pace steady",
+                "No low-grade courses are currently flagged in your record.",
+                self.COLORS["green"],
+            )
+        else:
+            self._insight_row(
+                insights,
+                "READY WHEN YOU ARE",
+                "Your insights will appear here",
+                "Connect academic records to see semester trends and course focus areas.",
+                self.COLORS["cyan"],
+            )
+        if self.data_error:
+            self._notice(
+                insights,
+                f"Records could not be loaded: {self.data_error}",
+                self.COLORS["amber"],
+            )
+        elif not self.enrollments:
+            self._notice(
+                insights,
+                "No enrollment records found for this student ID.",
+                self.COLORS["muted"],
+            )
+
+    def _metric_card(
+        self,
+        parent: ctk.CTkFrame,
+        column: int,
+        title: str,
+        value: str,
+        subtitle: str,
+        progress: float | None,
+        accent: str,
+        footer: str,
+    ) -> None:
+        card = self._card(parent)
+        card.grid(
+            row=0,
+            column=column,
+            sticky="nsew",
+            padx=(0 if column == 0 else 7, 7),
+            pady=3,
+        )
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card,
+            text=title,
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=self.COLORS["muted"],
+        ).pack(anchor="w", padx=20, pady=(19, 11))
+        ctk.CTkLabel(
+            card,
+            text=value,
+            font=app_font(family="Segoe UI", size=28, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).pack(anchor="w", padx=20)
+        ctk.CTkLabel(
+            card,
+            text=subtitle,
+            font=app_font(family="Segoe UI", size=9),
+            text_color=self.COLORS["muted"],
+            wraplength=210,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(5, 14))
+        if progress is not None:
+            bar = ctk.CTkProgressBar(
+                card,
+                height=8,
+                corner_radius=4,
+                progress_color=accent,
+                fg_color=self.COLORS["surface_alt"],
+            )
+            bar.pack(fill="x", padx=20, pady=(0, 12))
+            bar.set(max(0, min(progress, 1)))
+        ctk.CTkLabel(
+            card,
+            text=footer,
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=accent,
+            wraplength=210,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 19))
+
+    def _draw_semester_trend(
+        self, parent: ctk.CTkFrame, semester_averages: dict[str, float]
+    ) -> None:
+        if not semester_averages:
+            ctk.CTkLabel(
+                parent,
+                text=(
+                    "No semester results yet. Add graded course records to your "
+                    "academic data to see each semester's credit-weighted GPA here."
+                ),
+                font=app_font(family="Segoe UI", size=11),
+                text_color=self.COLORS["muted"],
+                wraplength=500,
+                justify="left",
+            ).pack(anchor="w", padx=16, pady=(5, 22))
+            return
+        ordered = sorted(
+            semester_averages.items(),
+            key=lambda item: (
+                (0, int(item[0])) if item[0].isdigit() else (1, item[0])
+            ),
+        )
+        chart = ctk.CTkCanvas(
+            parent,
+            height=260,
+            background=self.COLORS["surface"],
+            highlightthickness=0,
+            bd=0,
+        )
+        chart.pack(fill="x", padx=20, pady=(0, 20))
+        chart.bind(
+            "<Configure>",
+            lambda _event, target=chart, data=ordered[-6:]:
+            self._schedule_chart_redraw(
+                target,
+                lambda: self._paint_semester_chart(target, data),
+            ),
+        )
+        self._paint_semester_chart(chart, ordered[-6:])
+
+    def _paint_semester_chart(
+        self, chart: ctk.CTkCanvas, semester_data: list[tuple[str, float]]
+    ) -> None:
+        chart.delete("all")
+        width = max(chart.winfo_width(), 360)
+        height = max(chart.winfo_height(), 230)
+        left, right = 52, width - 24
+        top, bottom = 26, height - 42
+
+        for tick in range(5):
+            value = float(tick)
+            y = bottom - (value / self.GRADE_SCALE) * (bottom - top)
+            chart.create_line(
+                left, y, right, y, fill=self.COLORS["border"], width=1
+            )
+            chart.create_text(
+                left - 12,
+                y,
+                text=f"{tick}.0",
+                fill=self.COLORS["muted"],
+                font=("Segoe UI", 10),
+                anchor="e",
+            )
+
+        chart.create_line(left, top, left, bottom, fill=self.COLORS["border"], width=1)
+        chart.create_line(
+            left, bottom, right, bottom, fill=self.COLORS["border"], width=1
+        )
+        chart.create_text(
+            14,
+            (top + bottom) / 2,
+            text="GPA",
+            fill=self.COLORS["muted"],
+            font=("Segoe UI", 10, "bold"),
+            angle=90,
+        )
+
+        count = len(semester_data)
+        if not count:
+            return
+        spacing = (right - left) / max(count, 1)
+        points: list[tuple[float, float]] = []
+        for index, (semester, average) in enumerate(semester_data):
+            x = left + spacing * (index + 0.5)
+            y = bottom - (min(max(average, 0), self.GRADE_SCALE) / self.GRADE_SCALE) * (
+                bottom - top
+            )
+            points.append((x, y))
+            chart.create_text(
+                x,
+                bottom + 19,
+                text=str(semester)[:12],
+                fill=self.COLORS["muted"],
+                font=("Segoe UI", 10),
+                anchor="n",
+            )
+
+        line_coordinates = [coordinate for point in points for coordinate in point]
+        if len(points) > 1:
+            for color, line_width in (
+                ("#12384A", 11),
+                ("#15516A", 7),
+                ("#16718C", 5),
+                (self.COLORS["cyan"], 3),
+            ):
+                chart.create_line(
+                    *line_coordinates,
+                    fill=color,
+                    width=line_width,
+                    smooth=True,
+                    splinesteps=24,
+                    capstyle=tk.ROUND,
+                    joinstyle=tk.ROUND,
+                )
+        for x, y in points:
+            chart.create_oval(
+                x - 5, y - 5, x + 5, y + 5,
+                fill=self.COLORS["cyan"],
+                outline=self.COLORS["surface"],
+                width=2,
+            )
+        for (semester, average), (x, y) in zip(semester_data, points):
+            label_y = max(top + 8, y - 15)
+            chart.create_text(
+                x,
+                label_y,
+                text=f"{average:.2f}",
+                fill=self.COLORS["text"],
+                font=("Segoe UI", 10, "bold"),
+                anchor="s",
+            )
+
+    def _insight_row(
+        self,
+        parent: ctk.CTkFrame,
+        eyebrow: str,
+        title: str,
+        detail: str,
+        accent: str,
+    ) -> None:
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(4, 12))
+        ctk.CTkLabel(
+            row,
+            text=eyebrow,
+            font=app_font(family="Segoe UI", size=8, weight="bold"),
+            text_color=accent,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            row,
+            text=title,
+            font=app_font(family="Segoe UI", size=12, weight="bold"),
+            text_color=self.COLORS["text"],
+            wraplength=290,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 2))
+        ctk.CTkLabel(
+            row,
+            text=detail,
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=290,
+            justify="left",
+        ).pack(anchor="w")
+
+    def _notice(self, parent: ctk.CTkFrame, text: str, color: str) -> None:
+        ctk.CTkLabel(
+            parent,
+            text=text,
+            font=app_font(family="Segoe UI", size=9),
+            text_color=color,
+            wraplength=290,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 14))
+
+    def _build_planner(self, parent: ctk.CTkFrame) -> None:
+        summary = self._summary()
+        card = self._card(parent)
+        card.pack(fill="x", pady=(0, 16))
+        ctk.CTkLabel(
+            card,
+            text="PLAN YOUR GRADUATION GPA",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).pack(anchor="w", padx=20, pady=(20, 5))
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Edit the prefilled values if needed, then calculate the average "
+                "GPA you need across your remaining credits."
+            ),
+            font=app_font(family="Segoe UI", size=11),
+            text_color=self.COLORS["muted"],
+        ).pack(anchor="w", padx=20, pady=(0, 18))
+
+        fields = ctk.CTkFrame(card, fg_color="transparent")
+        fields.pack(fill="x", padx=20)
+        for column in range(4):
+            fields.grid_columnconfigure(column, weight=1, uniform="planner")
+        values = (
+            ("Current CGPA", f"{summary['cgpa']:.2f}" if summary["cgpa"] is not None else "0.00"),
+            ("Credits completed", f"{summary['completed_credits']:g}"),
+            ("Target CGPA", f"{self.target_cgpa:.2f}"),
+            ("Credits remaining", f"{summary['remaining_credits']:g}"),
+        )
+        self.planner_entries: list[ctk.CTkEntry] = []
+        for column, (label, value) in enumerate(values):
+            item = ctk.CTkFrame(fields, fg_color="transparent")
+            item.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
+            ctk.CTkLabel(
+                item,
+                text=label,
+                font=app_font(family="Segoe UI", size=10, weight="bold"),
+                text_color=self.COLORS["muted"],
+            ).pack(anchor="w", pady=(0, 7))
+            helper_by_field = {
+                "Current CGPA": "0.00–4.00",
+                "Credits completed": "Graded credits",
+                "Target CGPA": "Goal: 0.00–4.00",
+                "Credits remaining": "Credits left in program",
+            }
+            ctk.CTkLabel(
+                item,
+                text=helper_by_field[label],
+                font=app_font(family="Segoe UI", size=8),
+                text_color=self.COLORS["muted"],
+            ).pack(anchor="w", pady=(0, 5))
+            entry = ctk.CTkEntry(
+                item,
+                height=40,
+                corner_radius=9,
+                border_color=self.COLORS["border"],
+                placeholder_text=helper_by_field[label],
+            )
+            entry.insert(0, value)
+            entry.pack(fill="x")
+            self.planner_entries.append(entry)
+            entry.bind(
+                "<KeyRelease>",
+                lambda _event: self._update_what_if_projection(),
+            )
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill="x", padx=20, pady=(18, 20))
+        calculate_button = ctk.CTkButton(
+            actions,
+            text="Calculate required GPA",
+            height=40,
+            corner_radius=10,
+            font=app_font(family="Segoe UI", size=11, weight="bold"),
+            command=self._calculate_trajectory,
+        )
+        self._enable_button_transition(calculate_button, self.COLORS["blue"], "#2563EB")
+        calculate_button.pack(side="left")
+        self.planner_result = ctk.CTkLabel(
+            actions,
+            text="Enter your planning assumptions.",
+            font=app_font(family="Segoe UI", size=11),
+            text_color=self.COLORS["muted"],
+            wraplength=540,
+            justify="left",
+        )
+        self.planner_result.pack(side="left", padx=18)
+
+        scenario = self._card(parent)
+        scenario.pack(fill="x")
+        ctk.CTkLabel(
+            scenario,
+            text="WHAT-IF SCENARIO",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            scenario,
+            text=(
+                "Drag to explore the GPA you might average across remaining credits. "
+                "Your estimated graduation CGPA updates instantly."
+            ),
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=800,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 14))
+        scenario_body = ctk.CTkFrame(scenario, fg_color="transparent")
+        scenario_body.pack(fill="x", padx=20, pady=(0, 18))
+        scenario_body.grid_columnconfigure(0, weight=1)
+        scenario_body.grid_columnconfigure(1, weight=0)
+
+        slider_area = ctk.CTkFrame(scenario_body, fg_color="transparent")
+        slider_area.grid(row=0, column=0, sticky="ew", padx=(0, 24))
+        slider_area.grid_columnconfigure(0, weight=1)
+        self.what_if_gpa_value = ctk.CTkLabel(
+            slider_area,
+            text="Projected GPA: 3.00",
+            font=app_font(family="Segoe UI", size=14, weight="bold"),
+            text_color=self.COLORS["text"],
+        )
+        self.what_if_gpa_value.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        self.what_if_slider = ctk.CTkSlider(
+            slider_area,
+            from_=2.0,
+            to=4.0,
+            number_of_steps=20,
+            height=18,
+            progress_color=self.COLORS["blue"],
+            button_color=self.COLORS["cyan"],
+            button_hover_color="#0EA5E9",
+            command=self._update_what_if_projection,
+        )
+        self.what_if_slider.grid(row=1, column=0, sticky="ew")
+        self.what_if_slider.set(3.0)
+        bounds = ctk.CTkFrame(slider_area, fg_color="transparent")
+        bounds.grid(row=2, column=0, sticky="ew", pady=(5, 0))
+        bounds.grid_columnconfigure(0, weight=1)
+        bounds.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            bounds,
+            text="2.00",
+            font=app_font(family="Segoe UI", size=9),
+            text_color=self.COLORS["muted"],
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            bounds,
+            text="4.00",
+            font=app_font(family="Segoe UI", size=9),
+            text_color=self.COLORS["muted"],
+        ).grid(row=0, column=1, sticky="e")
+
+        projection = ctk.CTkFrame(
+            scenario_body,
+            fg_color=self.COLORS["surface_alt"],
+            corner_radius=12,
+        )
+        projection.grid(row=0, column=1, sticky="nsew")
+        ctk.CTkLabel(
+            projection,
+            text="ESTIMATED GRADUATION CGPA",
+            font=app_font(family="Segoe UI", size=8, weight="bold"),
+            text_color=self.COLORS["muted"],
+        ).pack(anchor="w", padx=14, pady=(12, 2))
+        self.what_if_projection = ctk.CTkLabel(
+            projection,
+            text="—",
+            font=app_font(family="Segoe UI", size=25, weight="bold"),
+            text_color=self.COLORS["green"],
+        )
+        self.what_if_projection.pack(anchor="w", padx=14)
+        self.what_if_detail = ctk.CTkLabel(
+            projection,
+            text="Based on remaining credits",
+            font=app_font(family="Segoe UI", size=8),
+            text_color=self.COLORS["muted"],
+        )
+        self.what_if_detail.pack(anchor="w", padx=14, pady=(0, 11))
+        self._update_what_if_projection(3.0)
+
+    def _update_what_if_projection(self, projected_gpa: float | None = None) -> None:
+        """Refresh the simulated graduation CGPA as the slider or inputs change."""
+        if not hasattr(self, "what_if_projection") or not hasattr(
+            self, "planner_entries"
+        ):
+            return
+        selected_gpa = (
+            float(projected_gpa)
+            if projected_gpa is not None
+            else float(self.what_if_slider.get())
+        )
+        self.what_if_gpa_value.configure(
+            text=f"Projected GPA: {selected_gpa:.2f}"
+        )
+        try:
+            current_cgpa, completed_credits, _, remaining_credits = (
+                float(entry.get()) for entry in self.planner_entries
+            )
+            projected_cgpa = calculate_projected_graduation_cgpa(
+                current_cgpa,
+                completed_credits,
+                selected_gpa,
+                remaining_credits,
+            )
+        except ValueError:
+            self.what_if_projection.configure(text="—")
+            self.what_if_detail.configure(
+                text="Check GPA and credit values",
+                text_color=self.COLORS["amber"],
+            )
+            return
+
+        if projected_cgpa is None:
+            self.what_if_projection.configure(text="—")
+            self.what_if_detail.configure(
+                text="Add completed or remaining credits",
+                text_color=self.COLORS["muted"],
+            )
+            return
+        self.what_if_projection.configure(text=f"{projected_cgpa:.2f}")
+        self.what_if_detail.configure(
+            text=f"Based on {completed_credits:g} completed + "
+            f"{remaining_credits:g} remaining credits",
+            text_color=self.COLORS["muted"],
+        )
+
+    def _calculate_trajectory(self) -> None:
+        try:
+            current, completed, target, remaining = (
+                float(entry.get()) for entry in self.planner_entries
+            )
+            if (
+                not all(math.isfinite(v) for v in (current, completed, target, remaining))
+                or not 0 <= current <= self.GRADE_SCALE
+                or not 0 <= target <= self.GRADE_SCALE
+                or completed < 0
+                or remaining < 0
+            ):
                 raise ValueError
         except ValueError:
-            self.predictor_status.configure(text="Enter CGPA values from 0 to 4 and non-negative credit values.")
+            self.planner_result.configure(
+                text="Use GPA values from 0 to 4 and non-negative credit values.",
+                text_color=self.COLORS["red"],
+            )
             return
 
-        self.predictor_status.configure(text="")
         if remaining == 0:
-            self.required_gpa_label.configure(text="Done", fg=THEME["success"])
-            self.required_gpa_note.configure(text="No remaining credits in this scenario.")
-            self.draw_gpa_meter(0)
-            return
-
-        from modules.predictor import TrajectoryEngine
-        required = TrajectoryEngine(current, completed, target, remaining).calculate_required_gpa()
-        self.required_gpa_label.configure(text=f"{required:.2f}", fg=THEME["danger"] if required > 4 else THEME["accent"])
-        if required > 4:
-            note = "This goal exceeds the 4.00 grading ceiling. Try a lower target or review your credit assumptions."
-        elif required <= 0:
-            note = "You are already on track to meet this target based on the entered credits."
-        else:
-            note = f"Aim for an average of {required:.2f} across the remaining {remaining:g} credits."
-        self.required_gpa_note.configure(text=note)
-        self.draw_gpa_meter(required)
-
-    def draw_gpa_meter(self, value):
-        if not hasattr(self, "gpa_meter") or not self.gpa_meter.winfo_exists():
-            return
-        self.gpa_meter.delete("all")
-        width = max(self.gpa_meter.winfo_width(), 240)
-        self.gpa_meter.create_rectangle(0, 2, width, 10, fill=THEME["input_bg"], outline="")
-        self.gpa_meter.create_rectangle(0, 2, width * min(max(value / 4, 0), 1), 10, fill=THEME["accent"], outline="")
-
-    def show_advisor_view(self):
-        self.clear_content()
-        self.create_page_header("Personalized guidance", "Academic advisor", "Ask about your academic plan and get suggestions grounded in your recorded performance.")
-        summary = self.summarize_enrollments(self.get_student_enrollments())
-        layout = tk.Frame(self.content_area, bg=THEME["bg"])
-        layout.pack(fill=tk.BOTH, expand=True)
-        layout.grid_columnconfigure(0, weight=4)
-        layout.grid_columnconfigure(1, weight=7)
-
-        profile = self.create_panel(layout, 20, 18)
-        profile.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        tk.Label(profile, text="YOUR ACADEMIC CONTEXT", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(profile, text=self.authenticated_user["id"], font=("Segoe UI", 15, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(8, 2))
-        tk.Label(profile, text="Current CGPA", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(15, 1))
-        tk.Label(profile, text=f"{summary['cgpa']:.2f}" if summary["cgpa"] is not None else "Not available", font=("Segoe UI", 23, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(profile, text=f"{summary['completed_credits']:g} graded credits", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(1, 14))
-        tk.Label(profile, text="COURSES TO WATCH", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(0, 7))
-        weak_courses = summary["weak_courses"]
-        if weak_courses:
-            for course in weak_courses[:4]:
-                tk.Label(profile, text=f"•  {course}", font=("Segoe UI", 9, "bold"), fg=THEME["danger"], bg=THEME["card"]).pack(anchor="w", pady=2)
-        else:
-            tk.Label(profile, text="No low-grade courses flagged", font=("Segoe UI", 9), fg=THEME["success"], bg=THEME["card"], wraplength=210, justify="left").pack(anchor="w")
-
-        conversation = tk.Frame(layout, bg=THEME["bg"])
-        conversation.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        question_panel = self.create_panel(conversation, 18, 16)
-        question_panel.pack(fill=tk.X, pady=(0, 12))
-        tk.Label(question_panel, text="WHAT WOULD YOU LIKE TO WORK ON?", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(0, 8))
-        quick_actions = tk.Frame(question_panel, bg=THEME["card"])
-        quick_actions.pack(fill=tk.X, pady=(0, 10))
-        self.advisor_input = tk.Text(question_panel, height=4, wrap=tk.WORD, font=("Segoe UI", 10), bg=THEME["input_bg"], fg=THEME["text_primary"], insertbackground=THEME["accent"], relief=tk.FLAT, padx=10, pady=9)
-        self.advisor_input.pack(fill=tk.X, pady=(0, 10))
-
-        def set_prompt(prompt):
-            self.advisor_input.delete("1.0", tk.END)
-            self.advisor_input.insert("1.0", prompt)
-            self.advisor_input.focus_set()
-
-        for prompt in ("How can I improve my CGPA?", "Help me plan my next semester"):
-            action = tk.Button(quick_actions, text=prompt, font=("Segoe UI", 8, "bold"), bg=THEME["input_bg"], fg=THEME["text_primary"], activebackground=THEME["sidebar_active"], bd=0, padx=10, pady=7, cursor="hand2", command=lambda value=prompt: set_prompt(value))
-            action.pack(side=tk.LEFT, padx=(0, 7))
-        ask_button = tk.Button(question_panel, text="Get academic guidance  →", font=("Segoe UI", 9, "bold"), bg=THEME["accent"], fg="white", activebackground=THEME["accent_hover"], activeforeground="white", bd=0, padx=16, pady=10, cursor="hand2", command=self.request_academic_advice)
-        ask_button.pack(anchor="e")
-
-        answer_panel = self.create_panel(conversation, 18, 16)
-        answer_panel.pack(fill=tk.BOTH, expand=True)
-        tk.Label(answer_panel, text="ADVISOR RESPONSE", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w", pady=(0, 9))
-        self.advisor_output = tk.Text(answer_panel, height=8, wrap=tk.WORD, font=("Segoe UI", 10), bg=THEME["card"], fg=THEME["text_primary"], relief=tk.FLAT, padx=2, pady=2, state=tk.DISABLED)
-        self.advisor_output.pack(fill=tk.BOTH, expand=True)
-        self.advisor_output.configure(state=tk.NORMAL)
-        self.advisor_output.insert("1.0", "Your academic context is ready. Choose a prompt or ask your own question to get started.")
-        self.advisor_output.configure(state=tk.DISABLED)
-
-    def request_academic_advice(self):
-        question = self.advisor_input.get("1.0", tk.END).strip()
-        if not question:
-            self.advisor_output.configure(state=tk.NORMAL)
-            self.advisor_output.delete("1.0", tk.END)
-            self.advisor_output.insert("1.0", "Add a question or choose one of the suggested prompts above.")
-            self.advisor_output.configure(state=tk.DISABLED)
-            return
-
-        summary = self.summarize_enrollments(self.get_student_enrollments())
-        if summary["cgpa"] is None:
-            advice = "There are no graded course records to analyze yet. Once your grades are available, ask again for guidance tailored to your academic performance."
-        else:
-            try:
-                from modules.ai_advisor import AIAdvisorEngine
-                advisor = AIAdvisorEngine(api_key=os.environ.get("GEMINI_API_KEY"))
-                advice = advisor.get_academic_advice(
-                    self.authenticated_user["name"],
-                    summary["cgpa"],
-                    summary["completed_credits"],
-                    summary["weak_courses"],
-                    question,
-                )
-            except Exception as error:
-                advice = f"Advisor service is unavailable right now. Please try again later. ({error})"
-        self.advisor_output.configure(state=tk.NORMAL)
-        self.advisor_output.delete("1.0", tk.END)
-        self.advisor_output.insert("1.0", advice)
-        self.advisor_output.configure(state=tk.DISABLED)
-
-    def show_analytics_view(self):
-        self.clear_content()
-        self.create_page_header("Academic insights", "Performance analytics", "Explore semester GPA movement and the grade profile behind your current standing.")
-        records = self.get_student_enrollments()
-        summary = self.summarize_enrollments(records)
-        stats = tk.Frame(self.content_area, bg=THEME["bg"])
-        stats.pack(fill=tk.X, pady=(0, 14))
-        self.create_stat_card(stats, "CUMULATIVE GPA", f"{summary['cgpa']:.2f}" if summary["cgpa"] is not None else "--", "Weighted from graded credits", THEME["accent"])
-        self.create_stat_card(stats, "GRADED CREDITS", f"{summary['completed_credits']:g}", "Credits included in GPA", THEME["success"])
-        self.create_stat_card(stats, "SEMESTERS RECORDED", str(len(summary["semester_averages"])), "With graded course data", THEME["warning"])
-
-        panels = tk.Frame(self.content_area, bg=THEME["bg"])
-        panels.pack(fill=tk.BOTH, expand=True)
-        panels.grid_columnconfigure(0, weight=7)
-        panels.grid_columnconfigure(1, weight=4)
-        trend_panel = self.create_panel(panels, 18, 15)
-        trend_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        tk.Label(trend_panel, text="GPA BY SEMESTER", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(trend_panel, text="Performance trend", font=("Segoe UI", 14, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(3, 0))
-        self.analytics_chart = tk.Canvas(trend_panel, height=260, bg=THEME["card"], highlightthickness=0)
-        self.analytics_chart.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        distribution_panel = self.create_panel(panels, 18, 15)
-        distribution_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        tk.Label(distribution_panel, text="COURSE GRADE MIX", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(distribution_panel, text="Grades on record", font=("Segoe UI", 14, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(3, 0))
-        self.grade_mix_chart = tk.Canvas(distribution_panel, height=250, bg=THEME["card"], highlightthickness=0)
-        self.grade_mix_chart.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-
-        semester_averages = summary["semester_averages"]
-        ordered_semesters = sorted(semester_averages.items(), key=lambda item: (0, int(item[0])) if item[0].isdigit() else (1, item[0]))
-        grade_order = ("A", "A-", "B+", "B", "B-", "C+", "C", "D", "F")
-        grade_counts = {grade: 0 for grade in grade_order}
-        for record in records:
-            grade = str(record.get("letter_grade") or "").strip().upper()
-            if grade in grade_counts:
-                grade_counts[grade] += 1
-
-        def draw_analytics(event=None):
-            chart = self.analytics_chart
-            chart.delete("all")
-            width = max(chart.winfo_width(), 320)
-            height = max(chart.winfo_height(), 190)
-            left, right, top, bottom = 38, width - 16, 18, height - 36
-            if not ordered_semesters:
-                chart.create_text(width / 2, height / 2, text="Semester data will appear here", fill=THEME["text_secondary"], font=("Segoe UI", 10))
-            else:
-                for grade in range(5):
-                    y = bottom - grade * (bottom - top) / 4
-                    chart.create_line(left, y, right, y, fill=THEME["card_border"])
-                    chart.create_text(left - 7, y, text=f"{grade}.0", fill=THEME["text_secondary"], font=("Segoe UI", 7), anchor="e")
-                slot = (right - left) / max(len(ordered_semesters) - 1, 1)
-                points = []
-                for index, (semester, average) in enumerate(ordered_semesters):
-                    x = left + (right - left) * index / max(len(ordered_semesters) - 1, 1) if len(ordered_semesters) > 1 else (left + right) / 2
-                    y = bottom - min(average, 4.0) * (bottom - top) / 4
-                    points.append((x, y))
-                    chart.create_text(x, bottom + 16, text=f"Sem {semester}", fill=THEME["text_secondary"], font=("Segoe UI", 7))
-                    chart.create_text(x, y - 12, text=f"{average:.2f}", fill=THEME["text_primary"], font=("Segoe UI", 8, "bold"))
-                if len(points) > 1:
-                    chart.create_line(*[coordinate for point in points for coordinate in point], fill=THEME["accent"], width=3, smooth=True, splinesteps=20)
-                for x, y in points:
-                    chart.create_oval(x - 5, y - 5, x + 5, y + 5, fill=THEME["accent"], outline=THEME["card"], width=2)
-
-            mix = self.grade_mix_chart
-            mix.delete("all")
-            mix_width = max(mix.winfo_width(), 230)
-            max_count = max(grade_counts.values(), default=0)
-            bar_left, bar_right = 42, mix_width - 14
-            row_height = max((mix.winfo_height() - 14) / len(grade_order), 19)
-            for index, grade in enumerate(grade_order):
-                y = 10 + index * row_height
-                mix.create_text(0, y + 7, text=grade, fill=THEME["text_secondary"], font=("Segoe UI", 8, "bold"), anchor="w")
-                mix.create_rectangle(bar_left, y + 2, bar_right, y + 12, fill=THEME["input_bg"], outline="")
-                bar_end = bar_left + (bar_right - bar_left) * grade_counts[grade] / max(max_count, 1)
-                mix.create_rectangle(bar_left, y + 2, bar_end, y + 12, fill=THEME["accent"] if grade_counts[grade] else THEME["input_bg"], outline="")
-                mix.create_text(bar_right + 5, y + 7, text=str(grade_counts[grade]), fill=THEME["text_primary"], font=("Segoe UI", 8), anchor="w")
-
-        self.analytics_chart.bind("<Configure>", draw_analytics)
-        self.grade_mix_chart.bind("<Configure>", draw_analytics)
-
-    def show_export_view(self):
-        self.clear_content()
-        self.create_page_header("Official document", "Export academic summary", "Preview your current academic record, then create a shareable PDF report.")
-        records = self.get_student_enrollments()
-        summary = self.summarize_enrollments(records)
-        layout = tk.Frame(self.content_area, bg=THEME["bg"])
-        layout.pack(fill=tk.BOTH, expand=True)
-        layout.grid_columnconfigure(0, weight=7)
-        layout.grid_columnconfigure(1, weight=4)
-
-        preview = self.create_panel(layout, 24, 22)
-        preview.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        tk.Label(preview, text="BUBT  /  EDUTRACK", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(preview, text="Academic progress report", font=("Segoe UI", 19, "bold"), fg=THEME["text_primary"], bg=THEME["card"]).pack(anchor="w", pady=(5, 2))
-        tk.Label(preview, text=f"Student ID   {self.authenticated_user['id']}", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w")
-        tk.Frame(preview, bg=THEME["card_border"], height=1).pack(fill=tk.X, pady=17)
-        preview_stats = tk.Frame(preview, bg=THEME["card"])
-        preview_stats.pack(fill=tk.X)
-        self.create_stat_card(preview_stats, "CURRENT CGPA", f"{summary['cgpa']:.2f}" if summary["cgpa"] is not None else "--", "Graded courses only", THEME["accent"])
-        self.create_stat_card(preview_stats, "CREDITS", f"{summary['completed_credits']:g}", "Completed and graded", THEME["success"])
-        tk.Label(preview, text="COURSE RECORDS INCLUDED", font=("Segoe UI", 8, "bold"), fg=THEME["text_secondary"], bg=THEME["card"]).pack(anchor="w", pady=(19, 7))
-        preview_table = ttk.Treeview(preview, columns=("course", "semester", "credits", "grade"), show="headings", height=6, style="EduTrack.Treeview")
-        for column, label, width in (("course", "COURSE", 150), ("semester", "SEMESTER", 110), ("credits", "CREDITS", 90), ("grade", "GRADE", 90)):
-            preview_table.heading(column, text=label)
-            preview_table.column(column, width=width, anchor="w" if column == "course" else "center")
-        for record in records[:100]:
-            preview_table.insert("", tk.END, values=(record.get("course_code", ""), record.get("semester_no", ""), record.get("credit_hours", ""), record.get("letter_grade") or "—"))
-        preview_table.pack(fill=tk.BOTH, expand=True)
-
-        action = self.create_panel(layout, 20, 18)
-        action.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        tk.Label(action, text="PDF EXPORT", font=("Segoe UI", 8, "bold"), fg=THEME["accent"], bg=THEME["card"]).pack(anchor="w")
-        tk.Label(action, text="A clean, printable report.", font=("Segoe UI", 15, "bold"), fg=THEME["text_primary"], bg=THEME["card"], wraplength=230, justify="left").pack(anchor="w", pady=(6, 8))
-        tk.Label(action, text="Your report includes student ID, current CGPA, course grades, semester details and earned credits.", font=("Segoe UI", 9), fg=THEME["text_secondary"], bg=THEME["card"], wraplength=230, justify="left").pack(anchor="w", pady=(0, 18))
-        export_button = tk.Button(action, text="Save report as PDF  ↓", font=("Segoe UI", 9, "bold"), bg=THEME["accent"], fg="white", activebackground=THEME["accent_hover"], activeforeground="white", bd=0, padx=14, pady=11, cursor="hand2", command=self.export_academic_report)
-        export_button.pack(fill=tk.X)
-        export_button.bind("<Enter>", lambda event: export_button.configure(bg=THEME["accent_hover"]))
-        export_button.bind("<Leave>", lambda event: export_button.configure(bg=THEME["accent"]))
-        self.export_status = tk.Label(action, text="", font=("Segoe UI", 9), fg=THEME["success"], bg=THEME["card"], wraplength=230, justify="left")
-        self.export_status.pack(anchor="w", pady=(12, 0))
-
-    def export_academic_report(self):
-        filename = filedialog.asksaveasfilename(
-            title="Save academic report",
-            defaultextension=".pdf",
-            initialfile=f"EduTrack_{self.authenticated_user['id']}.pdf",
-            filetypes=(("PDF document", "*.pdf"),),
-        )
-        if not filename:
+            self.planner_result.configure(
+                text="No credits remain in this scenario.",
+                text_color=self.COLORS["green"],
+            )
             return
         try:
-            from modules.pdf_generator import AcademicPDFReport
-            records = self.get_student_enrollments()
-            summary = self.summarize_enrollments(records)
-            AcademicPDFReport.generate_transcript_pdf(
-                filename,
-                {"student_id": self.authenticated_user["id"], "name": self.authenticated_user["name"]},
-                records,
-                summary["cgpa"] if summary["cgpa"] is not None else 0,
+            from modules.predictor import TrajectoryEngine
+
+            required = TrajectoryEngine(
+                current, completed, target, remaining
+            ).calculate_required_gpa()
+        except Exception as exc:
+            self.planner_result.configure(
+                text=f"Could not calculate the projection: {exc}",
+                text_color=self.COLORS["red"],
             )
-        except Exception as error:
-            self.export_status.configure(text=f"Could not create the report: {error}", fg=THEME["danger"])
             return
-        self.export_status.configure(text=f"Report saved: {filename}", fg=THEME["success"])
+
+        if required > self.GRADE_SCALE:
+            note = f"{required:.2f} required. This is above the 4.00 grading ceiling."
+            color = self.COLORS["red"]
+        elif required <= 0:
+            note = f"{required:.2f} required. You are already on pace for this goal."
+            color = self.COLORS["green"]
+        else:
+            note = f"Aim for {required:.2f} across the remaining {remaining:g} credits."
+            color = self.COLORS["cyan"]
+        self.planner_result.configure(text=note, text_color=color)
+
+    def _build_semester_calculator(self, parent: ctk.CTkFrame) -> None:
+        intro = self._card(parent)
+        intro.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(
+            intro,
+            text="BUILD YOUR SEMESTER-BY-SEMESTER GPA",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).pack(anchor="w", padx=18, pady=(16, 5))
+        ctk.CTkLabel(
+            intro,
+            text=(
+                "Add subjects and their credit values. Semester GPA and cumulative "
+                "CGPA recalculate automatically using the official BUBT grade points."
+            ),
+            font=app_font(family="Segoe UI", size=11),
+            text_color=self.COLORS["muted"],
+            wraplength=900,
+            justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 16))
+
+        totals = self._card(parent)
+        totals.pack(fill="x", pady=(0, 14))
+        totals.grid_columnconfigure(0, weight=1)
+        totals.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            totals,
+            text="OVERALL CUMULATIVE CGPA",
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=self.COLORS["muted"],
+        ).grid(row=0, column=0, sticky="w", padx=18, pady=(15, 2))
+        self.calculator_overall_gpa = ctk.CTkLabel(
+            totals,
+            text="—",
+            font=app_font(family="Segoe UI", size=25, weight="bold"),
+            text_color=self.COLORS["text"],
+        )
+        self.calculator_overall_gpa.grid(
+            row=1, column=0, sticky="w", padx=18, pady=(0, 3)
+        )
+        self.calculator_overall_credits = ctk.CTkLabel(
+            totals,
+            text="0 graded credits",
+            font=app_font(family="Segoe UI", size=9),
+            text_color=self.COLORS["muted"],
+        )
+        self.calculator_overall_credits.grid(
+            row=2, column=0, sticky="w", padx=18, pady=(0, 14)
+        )
+        self.calculator_status = ctk.CTkLabel(
+            totals,
+            text="Enter positive credit values to calculate GPA.",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=350,
+            justify="right",
+        )
+        self.calculator_status.grid(
+            row=0, column=1, rowspan=3, sticky="e", padx=18, pady=14
+        )
+
+        actions = ctk.CTkFrame(parent, fg_color="transparent")
+        actions.pack(fill="x", pady=(0, 12))
+        add_semester_button = ctk.CTkButton(
+            actions,
+            text="＋  Add Next Semester",
+            height=38,
+            corner_radius=10,
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            command=self._add_calculator_semester,
+        )
+        add_semester_button.pack(side="left")
+        self._enable_button_transition(
+            add_semester_button, self.COLORS["blue"], "#2563EB"
+        )
+        self.calculator_semester_container = ctk.CTkFrame(
+            parent, fg_color="transparent"
+        )
+        self.calculator_semester_container.pack(fill="x")
+        self._render_calculator_semesters()
+
+    def _render_calculator_semesters(self) -> None:
+        for child in self.calculator_semester_container.winfo_children():
+            child.destroy()
+        self.calculator_semester_gpas: list[ctk.CTkLabel] = []
+
+        for semester_index, subjects in enumerate(self.calculator_semesters):
+            card = self._card(self.calculator_semester_container)
+            card.pack(fill="x", pady=(0, 12))
+            header = ctk.CTkFrame(card, fg_color="transparent")
+            header.pack(fill="x", padx=16, pady=(14, 10))
+            ctk.CTkLabel(
+                header,
+                text=f"Semester {semester_index + 1}",
+                font=app_font(family="Segoe UI", size=14, weight="bold"),
+                text_color=self.COLORS["text"],
+            ).pack(side="left")
+            gpa_label = ctk.CTkLabel(
+                header,
+                text="GPA  —",
+                font=app_font(family="Segoe UI", size=11, weight="bold"),
+                text_color=self.COLORS["cyan"],
+            )
+            gpa_label.pack(side="right")
+            self.calculator_semester_gpas.append(gpa_label)
+
+            subject_grid = ctk.CTkFrame(card, fg_color="transparent")
+            subject_grid.pack(fill="x", padx=16)
+            subject_grid.grid_columnconfigure(0, weight=3, uniform="subject")
+            subject_grid.grid_columnconfigure(1, weight=1, uniform="subject")
+            subject_grid.grid_columnconfigure(2, weight=1, uniform="subject")
+            for column, heading in enumerate(("Subject name (optional)", "Grade", "Credits")):
+                ctk.CTkLabel(
+                    subject_grid,
+                    text=heading,
+                    font=app_font(family="Segoe UI", size=9, weight="bold"),
+                    text_color=self.COLORS["muted"],
+                    anchor="w",
+                ).grid(row=0, column=column, sticky="ew", padx=(0, 9), pady=(0, 6))
+
+            for row_index, subject in enumerate(subjects, start=1):
+                subject_name = ctk.CTkEntry(
+                    subject_grid,
+                    height=36,
+                    corner_radius=8,
+                    border_color=self.COLORS["border"],
+                    placeholder_text="e.g. Data Structures",
+                )
+                subject_name.insert(0, subject["name"])
+                subject_name.grid(
+                    row=row_index, column=0, sticky="ew", padx=(0, 9), pady=4
+                )
+                subject_name.bind(
+                    "<KeyRelease>",
+                    lambda _event, s=semester_index, r=row_index - 1, widget=subject_name:
+                    self._update_calculator_subject(s, r, "name", widget.get()),
+                )
+
+                grade_menu = ctk.CTkOptionMenu(
+                    subject_grid,
+                    values=list(GRADE_POINTS),
+                    variable=ctk.StringVar(value=subject["grade"]),
+                    height=36,
+                    corner_radius=8,
+                    fg_color=self.COLORS["surface_alt"],
+                    button_color=self.COLORS["blue"],
+                    button_hover_color="#2563EB",
+                    command=lambda grade, s=semester_index, r=row_index - 1:
+                    self._update_calculator_subject(s, r, "grade", grade),
+                )
+                grade_menu.grid(
+                    row=row_index, column=1, sticky="ew", padx=(0, 9), pady=4
+                )
+
+                credits_entry = ctk.CTkEntry(
+                    subject_grid,
+                    height=36,
+                    corner_radius=8,
+                    border_color=self.COLORS["border"],
+                    placeholder_text="e.g. 3",
+                )
+                credits_entry.insert(0, subject["credits"])
+                credits_entry.grid(
+                    row=row_index, column=2, sticky="ew", padx=(0, 9), pady=4
+                )
+                credits_entry.bind(
+                    "<KeyRelease>",
+                    lambda _event, s=semester_index, r=row_index - 1, widget=credits_entry:
+                    self._update_calculator_subject(s, r, "credits", widget.get()),
+                )
+
+                remove_button = ctk.CTkButton(
+                    subject_grid,
+                    text="×",
+                    width=32,
+                    height=32,
+                    corner_radius=8,
+                    fg_color="transparent",
+                    hover_color="#392535",
+                    text_color=self.COLORS["red"],
+                    command=lambda s=semester_index, r=row_index - 1:
+                    self._remove_calculator_subject(s, r),
+                )
+                remove_button.grid(row=row_index, column=3, padx=(0, 0), pady=4)
+
+            add_subject_button = ctk.CTkButton(
+                card,
+                text="＋  Add Subject",
+                width=130,
+                height=34,
+                corner_radius=9,
+                fg_color=self.COLORS["surface_alt"],
+                hover_color="#203552",
+                text_color=self.COLORS["text"],
+                font=app_font(family="Segoe UI", size=9, weight="bold"),
+                command=lambda s=semester_index: self._add_calculator_subject(s),
+            )
+            add_subject_button.pack(anchor="w", padx=16, pady=(10, 14))
+            self._enable_button_transition(
+                add_subject_button, self.COLORS["surface_alt"], "#203552"
+            )
+
+        self._refresh_calculator_results()
+
+    def _add_calculator_semester(self) -> None:
+        self.calculator_semesters.append([])
+        self._render_calculator_semesters()
+
+    def _add_calculator_subject(self, semester_index: int) -> None:
+        self.calculator_semesters[semester_index].append(
+            {"name": "", "grade": "A+", "credits": ""}
+        )
+        self._render_calculator_semesters()
+
+    def _remove_calculator_subject(
+        self, semester_index: int, subject_index: int
+    ) -> None:
+        self.calculator_semesters[semester_index].pop(subject_index)
+        self._render_calculator_semesters()
+
+    def _update_calculator_subject(
+        self, semester_index: int, subject_index: int, field: str, value: str
+    ) -> None:
+        self.calculator_semesters[semester_index][subject_index][field] = value
+        self._refresh_calculator_results()
+
+    def _refresh_calculator_results(self) -> None:
+        overall_subjects: list[dict[str, str]] = []
+        invalid_entries = 0
+        total_credits = 0.0
+
+        for semester_index, subjects in enumerate(self.calculator_semesters):
+            overall_subjects.extend(subjects)
+            gpa, credits, invalid = calculate_calculator_gpa(subjects)
+            total_credits += credits
+            invalid_entries += invalid
+            gpa_label = self.calculator_semester_gpas[semester_index]
+            gpa_label.configure(
+                text=f"GPA  {gpa:.2f}" if gpa is not None else "GPA  —"
+            )
+
+        overall_gpa, overall_credits, overall_invalid = calculate_calculator_gpa(
+            overall_subjects
+        )
+        invalid_entries = max(invalid_entries, overall_invalid)
+        self.calculator_overall_gpa.configure(
+            text=f"{overall_gpa:.2f}" if overall_gpa is not None else "—"
+        )
+        self.calculator_overall_credits.configure(
+            text=f"{overall_credits:g} graded credits"
+        )
+        if invalid_entries:
+            self.calculator_status.configure(
+                text="Credits must be positive numbers. Invalid rows are excluded.",
+                text_color=self.COLORS["amber"],
+            )
+        elif total_credits:
+            self.calculator_status.configure(
+                text="Semester and overall GPAs are credit-weighted.",
+                text_color=self.COLORS["green"],
+            )
+        else:
+            self.calculator_status.configure(
+                text="Enter positive credit values to calculate GPA.",
+                text_color=self.COLORS["muted"],
+            )
+
+    def _build_advisor(self, parent: ctk.CTkFrame) -> None:
+        summary = self._summary()
+        context = self._card(parent)
+        context.pack(fill="x", pady=(0, 14))
+        weak = ", ".join(
+            str(record.get("course_code", "Course"))
+            for record in summary["weak_courses"][:5]
+        ) or "None identified"
+        cgpa_text = (
+            f"{summary['cgpa']:.2f}"
+            if summary["cgpa"] is not None
+            else "No grades"
+        )
+        ctk.CTkLabel(
+            context,
+            text="STUDENT CONTEXT",
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).pack(anchor="w", padx=18, pady=(16, 7))
+        ctk.CTkLabel(
+            context,
+            text=(
+                f"CGPA: {cgpa_text}  |  "
+                f"Graded credits: {summary['completed_credits']:g}  |  "
+                f"Courses to watch: {weak}"
+            ),
+            font=app_font(family="Segoe UI", size=11),
+            text_color=self.COLORS["muted"],
+            wraplength=900,
+            justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 16))
+
+        card = self._card(parent)
+        card.pack(fill="both", expand=True)
+        ctk.CTkLabel(
+            card,
+            text="What would you like help with?",
+            font=app_font(family="Segoe UI", size=14, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).pack(anchor="w", padx=18, pady=(18, 10))
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Type a question or edit the example below, then select "
+                "Get academic guidance. Your grades help personalize the answer."
+            ),
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=800,
+            justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 10))
+        self.advisor_input = ctk.CTkTextbox(
+            card,
+            height=100,
+            corner_radius=10,
+            border_width=1,
+            border_color=self.COLORS["border"],
+            font=app_font(family="Segoe UI", size=11),
+            wrap="word",
+        )
+        self.advisor_input.pack(fill="x", padx=18)
+        self.advisor_input.insert(
+            "1.0", "How can I improve my CGPA next semester?"
+        )
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill="x", padx=18, pady=12)
+        self.advisor_button = ctk.CTkButton(
+            actions,
+            text="Get academic guidance",
+            height=38,
+            corner_radius=9,
+            command=self._request_advice,
+        )
+        self._enable_button_transition(
+            self.advisor_button, self.COLORS["blue"], "#2563EB"
+        )
+        self.advisor_button.pack(side="left")
+        self.advisor_status = ctk.CTkLabel(
+            actions,
+            text="Uses your saved Gemini key, if configured; otherwise uses local guidance.",
+            font=app_font(family="Segoe UI", size=9),
+            text_color=self.COLORS["muted"],
+            wraplength=500,
+        )
+        self.advisor_status.pack(side="left", padx=12)
+        ctk.CTkLabel(
+            card,
+            text="ADVISOR RESPONSE",
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).pack(anchor="w", padx=18, pady=(5, 8))
+        self.advisor_output = ctk.CTkTextbox(
+            card,
+            height=180,
+            corner_radius=10,
+            font=app_font(family="Segoe UI", size=11),
+            wrap="word",
+        )
+        self.advisor_output.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        self.advisor_output.insert(
+            "1.0",
+            "Your academic profile is ready. Ask a question to receive guidance.",
+        )
+        self.advisor_output.configure(state="disabled")
+
+    def _request_advice(self) -> None:
+        question = self.advisor_input.get("1.0", "end").strip()
+        if not question:
+            self.advisor_status.configure(
+                text="Enter a question before requesting advice.",
+                text_color=self.COLORS["amber"],
+            )
+            return
+        summary = self._summary()
+        if summary["cgpa"] is None:
+            self.advisor_status.configure(
+                text="No graded records are available to personalize guidance.",
+                text_color=self.COLORS["amber"],
+            )
+            return
+
+        self.advisor_button.configure(state="disabled", text="Thinking...")
+        self.advisor_status.configure(
+            text="Preparing academic guidance...",
+            text_color=self.COLORS["muted"],
+        )
+        context = (
+            self.student["name"],
+            summary["cgpa"],
+            summary["completed_credits"],
+            [
+                str(record.get("course_code", "Course"))
+                for record in summary["weak_courses"]
+            ],
+            question,
+        )
+
+        def generate() -> None:
+            try:
+                from modules.ai_advisor import AIAdvisorEngine
+
+                advisor = AIAdvisorEngine(
+                    api_key=self.gemini_api_key or os.environ.get("GEMINI_API_KEY")
+                )
+                response = advisor.get_academic_advice(*context)
+                error = None
+            except Exception as exc:
+                response = f"Advisor could not be reached: {exc}"
+                error = str(exc)
+            self.after(0, lambda: self._finish_advice(response, error))
+
+        threading.Thread(target=generate, name="edutrack-ai-advisor", daemon=True).start()
+
+    def _finish_advice(self, response: str, error: str | None) -> None:
+        if not self.winfo_exists():
+            return
+        self.advisor_output.configure(state="normal")
+        self.advisor_output.delete("1.0", "end")
+        self.advisor_output.insert("1.0", response or "The advisor returned an empty response.")
+        self.advisor_output.configure(state="disabled")
+        self.advisor_button.configure(state="normal", text="Get academic guidance")
+        self.advisor_status.configure(
+            text="Advisor service unavailable." if error else "Guidance is ready.",
+            text_color=self.COLORS["red"] if error else self.COLORS["green"],
+        )
+
+    def _build_analytics(self, parent: ctk.CTkFrame) -> None:
+        summary = self._summary()
+        overview = self._card(parent)
+        overview.pack(fill="x", pady=(0, 14))
+        self._section_heading(overview, "Academic overview")
+        cgpa_text = (
+            f"{summary['cgpa']:.2f}"
+            if summary["cgpa"] is not None
+            else "No grades"
+        )
+        overview_metrics = (
+            ("CURRENT CGPA", cgpa_text),
+            ("GRADED CREDITS", f"{summary['completed_credits']:g}"),
+            ("SEMESTERS", str(len(summary["semester_averages"]))),
+            ("GRADED COURSES", str(len(summary["graded_courses"]))),
+        )
+        metric_row = ctk.CTkFrame(overview, fg_color="transparent")
+        metric_row.pack(fill="x", padx=20, pady=(0, 20))
+        for column, (label, value) in enumerate(overview_metrics):
+            metric_row.grid_columnconfigure(column, weight=1, uniform="analytics")
+            metric = ctk.CTkFrame(
+                metric_row,
+                fg_color=self.COLORS["surface_alt"],
+                corner_radius=12,
+            )
+            metric.grid(
+                row=0,
+                column=column,
+                sticky="nsew",
+                padx=(0 if column == 0 else 8, 8),
+            )
+            ctk.CTkLabel(
+                metric,
+                text=label,
+                font=app_font(family="Segoe UI", size=8, weight="bold"),
+                text_color=self.COLORS["muted"],
+                wraplength=160,
+                justify="left",
+            ).pack(anchor="w", padx=14, pady=(13, 5))
+            ctk.CTkLabel(
+                metric,
+                text=value,
+                font=app_font(family="Segoe UI", size=18, weight="bold"),
+                text_color=self.COLORS["text"],
+            ).pack(anchor="w", padx=14, pady=(0, 13))
+
+        trend = self._card(parent)
+        trend.pack(fill="x", pady=(0, 14))
+        self._section_heading(trend, "Semester GPA")
+        self._helper_text(
+            trend,
+            "Each point shows the credit-weighted average for one semester. "
+            "Higher values indicate stronger semester performance.",
+        )
+        self._draw_semester_trend(trend, summary["semester_averages"])
+
+        grades = self._card(parent)
+        grades.pack(fill="x")
+        self._section_heading(grades, "Grade distribution")
+        self._helper_text(
+            grades,
+            "Bars compare how many recorded courses received each letter grade.",
+        )
+        counts: Counter[str] = summary["grade_counts"]
+        ordered_counts = [(grade, counts.get(grade, 0)) for grade in self.GRADE_ORDER]
+        if not any(count for _, count in ordered_counts):
+            self._helper_text(
+                grades,
+                "No graded courses are recorded yet. The full BUBT scale is shown "
+                "with zero counts and will update when course results are available.",
+            )
+        chart = ctk.CTkCanvas(
+            grades,
+            height=max(390, len(ordered_counts) * 42 + 76),
+            background=self.COLORS["surface"],
+            highlightthickness=0,
+            bd=0,
+        )
+        chart.pack(fill="x", padx=24, pady=(0, 24))
+        chart.bind(
+            "<Configure>",
+            lambda _event, target=chart, data=ordered_counts:
+            self._schedule_chart_redraw(
+                target,
+                lambda: self._paint_grade_distribution(target, data),
+            ),
+        )
+        self._paint_grade_distribution(chart, ordered_counts)
+
+    def _paint_grade_distribution(
+        self, chart: ctk.CTkCanvas, grade_counts: list[tuple[str, int]]
+    ) -> None:
+        chart.delete("all")
+        width = max(chart.winfo_width(), 360)
+        height = max(chart.winfo_height(), len(grade_counts) * 42 + 76)
+        left, right = 62, width - 48
+        top, bottom = 22, height - 48
+        max_count = max((count for _, count in grade_counts), default=1)
+        axis_max = max(1, math.ceil(max_count / 2) * 2)
+
+        ticks = sorted(
+            {
+                round(axis_max * fraction)
+                for fraction in (0, 0.25, 0.5, 0.75, 1)
+            }
+        )
+        for tick in ticks:
+            x = left + (tick / axis_max) * (right - left)
+            chart.create_line(
+                x,
+                top,
+                x,
+                bottom,
+                fill="#1B2A3E" if tick else self.COLORS["border"],
+                width=1,
+            )
+            chart.create_text(
+                x,
+                bottom + 18,
+                text=str(tick),
+                fill=self.COLORS["muted"],
+                font=("Segoe UI", 11),
+                anchor="n",
+            )
+
+        chart.create_text(
+            (left + right) / 2,
+            height - 8,
+            text="NUMBER OF COURSES",
+            fill=self.COLORS["muted"],
+            font=("Segoe UI", 10, "bold"),
+            anchor="s",
+        )
+        chart.create_line(
+            left, bottom, right, bottom, fill=self.COLORS["border"], width=1
+        )
+        row_height = (bottom - top) / max(len(grade_counts), 1)
+        palette = (
+            self.COLORS["cyan"],
+            self.COLORS["blue"],
+            self.COLORS["green"],
+            "#818CF8",
+            "#A78BFA",
+            "#FBBF24",
+            "#FB923C",
+            "#FB7185",
+            "#F472B6",
+            self.COLORS["red"],
+        )
+        for index, (grade, count) in enumerate(grade_counts):
+            center_y = top + row_height * (index + 0.5)
+            chart.create_line(
+                left,
+                center_y + row_height / 2,
+                right,
+                center_y + row_height / 2,
+                fill="#17263A",
+                width=1,
+            )
+            chart.create_text(
+                left - 14,
+                center_y,
+                text=grade,
+                fill=self.COLORS["text"],
+                font=("Segoe UI", 12, "bold"),
+                anchor="e",
+            )
+            bar_end = left + (count / axis_max) * (right - left)
+            color = palette[index % len(palette)]
+            if count:
+                chart.create_rectangle(
+                    left + 1,
+                    center_y - 8,
+                    max(left + 2, bar_end),
+                    center_y + 8,
+                    fill=color,
+                    outline="",
+                )
+                count_x = min(bar_end - 8, right - 8)
+                count_anchor = "e"
+                count_color = self.COLORS["window"]
+            else:
+                count_x = left + 9
+                count_anchor = "w"
+                count_color = self.COLORS["muted"]
+            chart.create_text(
+                count_x,
+                center_y,
+                text=str(count),
+                fill=count_color,
+                font=("Segoe UI", 11, "bold"),
+                anchor=count_anchor,
+            )
+
+    def _build_settings(self, parent: ctk.CTkFrame) -> None:
+        card = self._card(parent)
+        card.pack(fill="x")
+        ctk.CTkLabel(
+            card,
+            text="Student profile",
+            font=app_font(family="Segoe UI", size=15, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).pack(anchor="w", padx=18, pady=(18, 4))
+        ctk.CTkLabel(
+            card,
+            text="These values personalize the current local workspace.",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+        ).pack(anchor="w", padx=18, pady=(0, 16))
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Update your display details and graduation assumptions below. "
+                "Select Save settings to store your changes and refresh the dashboard."
+            ),
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            wraplength=800,
+            justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 10))
+        self.settings_entries: dict[str, ctk.CTkEntry] = {}
+        for label, key, value in (
+            ("Display name", "name", self.student["name"]),
+            ("Student ID", "student_id", self.student["student_id"]),
+            ("Current semester", "semester", self.student["semester"]),
+            ("Program credits", "program_credits", str(self.program_credits)),
+            ("Target CGPA", "target_cgpa", f"{self.target_cgpa:.2f}"),
+            ("Gemini API key", "gemini_api_key", self.gemini_api_key),
+        ):
+            ctk.CTkLabel(
+                card,
+                text=label,
+                font=app_font(family="Segoe UI", size=10, weight="bold"),
+                text_color=self.COLORS["muted"],
+            ).pack(anchor="w", padx=18, pady=(9, 5))
+            entry = ctk.CTkEntry(
+                card,
+                height=38,
+                corner_radius=9,
+                show="•" if key == "gemini_api_key" else None,
+                placeholder_text=(
+                    "Optional — paste a Gemini API key to enable cloud advice"
+                    if key == "gemini_api_key"
+                    else None
+                ),
+            )
+            entry.insert(0, value)
+            entry.pack(fill="x", padx=18)
+            if key == "student_id":
+                entry.configure(state="disabled")
+            self.settings_entries[key] = entry
+
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Gemini API key (optional): saved locally in SQLite and used for "
+                "cloud AI advice. Leave blank to use the local advisor."
+            ),
+            font=app_font(family="Segoe UI", size=9),
+            text_color=self.COLORS["amber"],
+            wraplength=760,
+            justify="left",
+        ).pack(anchor="w", padx=18, pady=(9, 0))
+
+        self.settings_status = ctk.CTkLabel(
+            card,
+            text="",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["green"],
+        )
+        self.settings_status.pack(anchor="w", padx=18, pady=(10, 0))
+        save_button = ctk.CTkButton(
+            card,
+            text="Save settings",
+            height=40,
+            corner_radius=9,
+            command=self._save_settings,
+        )
+        self._enable_button_transition(save_button, self.COLORS["blue"], "#2563EB")
+        save_button.pack(anchor="w", padx=18, pady=(12, 18))
+
+        integration = self._card(parent)
+        integration.pack(fill="x", pady=(14, 0))
+        ctk.CTkLabel(
+            integration,
+            text="BACKEND CONNECTIONS",
+            font=app_font(family="Segoe UI", size=9, weight="bold"),
+            text_color=self.COLORS["cyan"],
+        ).pack(anchor="w", padx=18, pady=(16, 7))
+        ctk.CTkLabel(
+            integration,
+            text=(
+                "Academic records: modules.crud.AcademicCRUD\n"
+                "GPA projections: modules.predictor.TrajectoryEngine\n"
+                "AI guidance: modules.ai_advisor.AIAdvisorEngine\n"
+                "Use the Gemini API key above or set GEMINI_API_KEY in the environment."
+            ),
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 16))
+
+    def _save_settings(self) -> None:
+        name = self.settings_entries["name"].get().strip()
+        student_id = self.settings_entries["student_id"].get().strip()
+        semester = self.settings_entries["semester"].get().strip()
+        gemini_api_key = self.settings_entries["gemini_api_key"].get().strip()
+        try:
+            program_credits = float(self.settings_entries["program_credits"].get())
+            target_cgpa = float(self.settings_entries["target_cgpa"].get())
+            if (
+                not name
+                or not student_id
+                or not semester
+                or not math.isfinite(program_credits)
+                or program_credits <= 0
+                or not math.isfinite(target_cgpa)
+                or not 0 <= target_cgpa <= self.GRADE_SCALE
+            ):
+                raise ValueError
+        except ValueError:
+            self.settings_status.configure(
+                text="Enter a name, ID, semester, positive credit total, and target GPA from 0 to 4.",
+                text_color=self.COLORS["red"],
+            )
+            return
+
+        if student_id != self.student["student_id"]:
+            self.settings_status.configure(
+                text="Student ID is assigned by the account and cannot be changed here.",
+                text_color=self.COLORS["red"],
+            )
+            return
+        try:
+            from modules.crud import AcademicCRUD
+
+            AcademicCRUD.save_user_settings(
+                student_id,
+                name,
+                semester,
+                program_credits,
+                target_cgpa,
+                gemini_api_key,
+            )
+        except Exception as exc:
+            self.settings_status.configure(
+                text=f"Could not save profile: {exc}",
+                text_color=self.COLORS["red"],
+            )
+            return
+
+        self.student.update(name=name, semester=semester)
+        self.program_credits = program_credits
+        self.target_cgpa = target_cgpa
+        self.gemini_api_key = gemini_api_key
+        self._update_profile_badge()
+        self._discard_cached_pages()
+        self.show_page("Dashboard")
+        self._show_header_status(
+            "✓  SETTINGS SAVED",
+            self.COLORS["green"],
+            reset_after=3500,
+        )
+
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = EduTrackApp(root)
-    root.mainloop()
+    if os.environ.get("EDUTRACK_AUTHENTICATED") != "1":
+        from auth_ui import EduTrackLogin
+
+        app = EduTrackLogin()
+    else:
+        app = EduTrackApp()
+    app.mainloop()

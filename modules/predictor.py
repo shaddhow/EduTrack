@@ -1,4 +1,7 @@
-import numpy as np
+from collections.abc import Mapping
+from typing import Any
+
+from modules.grading import calculate_weighted_cgpa
 
 class TrajectoryEngine:
     def __init__(self, current_cgpa, completed_credits, target_cgpa, remaining_credits):
@@ -16,3 +19,34 @@ class TrajectoryEngine:
             
         req_gpa = required_points / self.remaining_credits
         return round(req_gpa, 2)
+
+    @staticmethod
+    def calculate_current_cgpa(
+        enrollments: list[Mapping[str, Any]],
+    ) -> tuple[float | None, float]:
+        """Calculate current CGPA and credits using official BUBT grade points."""
+        return calculate_weighted_cgpa(enrollments)
+
+    @staticmethod
+    def calculate_target_required_gpa(
+        current_cgpa: float,
+        completed_credits: float,
+        target_cgpa: float,
+        remaining_credits: float,
+    ) -> tuple[float, str]:
+        """Compatibility helper returning the required GPA and feasibility note."""
+        required_gpa = TrajectoryEngine(
+            current_cgpa,
+            completed_credits,
+            target_cgpa,
+            remaining_credits,
+        ).calculate_required_gpa()
+        if remaining_credits == 0:
+            status = "No remaining credits."
+        elif required_gpa > 4.0:
+            status = "Target exceeds the maximum GPA of 4.00."
+        elif required_gpa <= 0:
+            status = "You are already on track to meet this target."
+        else:
+            status = "Target is achievable within the grading scale."
+        return required_gpa, status
