@@ -6,6 +6,48 @@ import customtkinter as ctk
 import tkinter as tk
 
 
+DEFAULT_ACCENT_THEME = "Default Blue"
+
+ACCENT_THEMES = {
+    "Default Blue": {
+        "primary": "#3B82F6",
+        "primary_hover": "#2563EB",
+        "accent": "#38BDF8",
+        "card": "#111D30",
+        "card_alt": "#16243A",
+    },
+    "Emerald": {
+        "primary": "#10B981",
+        "primary_hover": "#059669",
+        "accent": "#34D399",
+        "card": "#10251F",
+        "card_alt": "#173229",
+    },
+    "Purple": {
+        "primary": "#8B5CF6",
+        "primary_hover": "#7C3AED",
+        "accent": "#C4B5FD",
+        "card": "#1B1730",
+        "card_alt": "#26203D",
+    },
+}
+
+
+def accent_theme_colors(theme_name: str) -> dict[str, str]:
+    """Return the accent and card colors for a supported application theme."""
+    try:
+        palette = ACCENT_THEMES[theme_name]
+    except KeyError as exc:
+        raise ValueError(f"Unknown accent theme: {theme_name!r}.") from exc
+    return {
+        "blue": palette["primary"],
+        "blue_hover": palette["primary_hover"],
+        "cyan": palette["accent"],
+        "surface": palette["card"],
+        "surface_alt": palette["card_alt"],
+    }
+
+
 _FONT_SIZE_SCALE = {
     8: 11,
     9: 12,

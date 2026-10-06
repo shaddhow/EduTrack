@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
+import tempfile
 import threading
 from pathlib import Path
+from typing import Any
 
 from modules.grading import grade_point_for_letter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "edutrack.db"
 DATABASE_SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+BACKUP_FORMAT = "edutrack-data"
+BACKUP_VERSION = 1
 DEMO_STUDENT_ID = "20255103311"
 DEMO_PASSWORD = "EduTrack2026!"
 PASSWORD_HASH_ITERATIONS = 310_000
@@ -29,6 +34,39 @@ def get_database_path() -> Path:
     if configured_path:
         return Path(configured_path).expanduser().resolve()
     return DEFAULT_DATABASE_PATH
+
+
+def write_json_backup(file_path: str | Path, payload: dict[str, Any]) -> Path:
+    """Write a JSON backup atomically so a failed export cannot truncate a file."""
+    path = Path(file_path).expanduser()
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as backup_file:
+            temporary_path = Path(backup_file.name)
+            json.dump(payload, backup_file, ensure_ascii=False, indent=2)
+            backup_file.write("\n")
+        os.replace(temporary_path, path)
+        return path
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def read_json_backup(file_path: str | Path) -> Any:
+    """Read a UTF-8 JSON backup and report malformed JSON to the caller."""
+    with Path(file_path).expanduser().open("r", encoding="utf-8") as backup_file:
+        return json.load(backup_file)
 
 
 def hash_password(password: str) -> str:
@@ -137,6 +175,31 @@ def _seed_demo_data(connection: sqlite3.Connection) -> None:
         """,
         enrollments,
     )
+    connection.executemany(
+        """
+        INSERT OR IGNORE INTO attendance
+            (student_id, course_code, total_classes, attended_classes)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            (DEMO_STUDENT_ID, "CSE101", 15, 12),
+            (DEMO_STUDENT_ID, "MAT101", 15, 10),
+            (DEMO_STUDENT_ID, "CSE103", 16, 14),
+        ),
+    )
+    connection.executemany(
+        """
+        INSERT OR IGNORE INTO routines (day, time, course_code, room)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            ("Monday", "09:00 - 10:30", "CSE101", "Room 501"),
+            ("Monday", "11:00 - 12:30", "MAT101", "Room 402"),
+            ("Tuesday", "10:00 - 11:30", "CSE103", "Lab 2"),
+            ("Wednesday", "09:00 - 10:30", "CSE101", "Room 501"),
+            ("Thursday", "11:00 - 12:30", "MAT101", "Room 402"),
+        ),
+    )
 
 
 def initialize_database(database_path: str | Path | None = None) -> Path:
@@ -149,10 +212,26 @@ def initialize_database(database_path: str | Path | None = None) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = _connect(path)
         try:
+            faculty_sections_table_existed = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'faculty_sections'
+                """
+            ).fetchone() is not None
             schema = DATABASE_SCHEMA_PATH.read_text(encoding="utf-8")
             connection.executescript(schema)
             _migrate_student_profile(connection)
+            _migrate_user_settings(connection)
             _seed_demo_data(connection)
+            if not faculty_sections_table_existed:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO faculty_sections
+                        (faculty_user_id, section)
+                    VALUES (?, ?)
+                    """,
+                    ("FACULTY001", "06"),
+                )
             _normalize_grade_points(connection)
             connection.commit()
         except Exception:
@@ -208,6 +287,24 @@ def _migrate_student_profile(connection: sqlite3.Connection) -> None:
     for column, statement in migrations:
         if column not in existing_columns:
             connection.execute(statement)
+
+
+def _migrate_user_settings(connection: sqlite3.Connection) -> None:
+    """Add newer preferences to databases created by earlier versions."""
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(user_settings)").fetchall()
+    }
+    if "accent_theme" not in existing_columns:
+        connection.execute(
+            "ALTER TABLE user_settings ADD COLUMN accent_theme "
+            "TEXT NOT NULL DEFAULT 'Default Blue'"
+        )
+    if "current_cgpa" not in existing_columns:
+        connection.execute(
+            "ALTER TABLE user_settings ADD COLUMN current_cgpa "
+            "REAL CHECK (current_cgpa BETWEEN 0 AND 4)"
+        )
 
 
 def get_connection() -> sqlite3.Connection:

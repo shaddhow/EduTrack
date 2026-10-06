@@ -14,6 +14,7 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+from modules.app_icon import set_app_icon
 from modules.typography import app_font, maximize_window
 
 
@@ -39,6 +40,7 @@ class EduTrackLogin(ctk.CTk):
 
     def __init__(self) -> None:
         super().__init__()
+        set_app_icon(self)
         self.title("EduTrack | Sign in")
         self.geometry("1030x680")
         self.minsize(900, 610)
@@ -258,13 +260,19 @@ class EduTrackLogin(ctk.CTk):
         self.role = ctk.CTkOptionMenu(
             form,
             values=["Student", "Faculty"],
-            height=42,
-            corner_radius=10,
+            width=350,
+            height=44,
+            corner_radius=12,
             fg_color=self.COLORS["panel_light"],
             button_color=self.COLORS["blue"],
             button_hover_color="#2563EB",
             dropdown_fg_color=self.COLORS["panel"],
+            dropdown_hover_color=self.COLORS["blue"],
+            dropdown_text_color=self.COLORS["text"],
+            text_color=self.COLORS["text"],
             font=app_font(family="Segoe UI", size=11),
+            dropdown_font=app_font(family="Segoe UI", size=11),
+            dynamic_resizing=False,
         )
         self.role.pack(fill="x", pady=(0, 16))
 

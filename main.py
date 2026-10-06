@@ -12,12 +12,20 @@ import subprocess
 import sys
 import tkinter as tk
 from collections import Counter, defaultdict
+from tkinter import messagebox, ttk
 from typing import Any
 
 import customtkinter as ctk
 
+from modules.app_icon import set_app_icon
 from modules.grading import GRADE_POINTS
-from modules.typography import app_font, maximize_window
+from modules.typography import (
+    ACCENT_THEMES,
+    DEFAULT_ACCENT_THEME,
+    accent_theme_colors,
+    app_font,
+    maximize_window,
+)
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -87,10 +95,15 @@ class EduTrackApp(ctk.CTk):
     NAV_ITEMS = (
         ("Dashboard", "01"),
         ("Trajectory Planner", "02"),
-        ("Semester Calculator", "03"),
+        ("CGPA Calculator", "03"),
         ("AI Advisor", "04"),
         ("Analytics", "05"),
-        ("Settings", "06"),
+        ("Attendance & Schedule", "06"),
+        ("Settings", "07"),
+    )
+    FACULTY_NAV_ITEMS = (
+        ("Dashboard", "01"),
+        ("Section Assignments", "02"),
     )
 
     COLORS = {
@@ -102,6 +115,7 @@ class EduTrackApp(ctk.CTk):
         "text": "#F2F6FC",
         "muted": "#91A2B9",
         "blue": "#3B82F6",
+        "blue_hover": "#2563EB",
         "cyan": "#38BDF8",
         "green": "#34D399",
         "amber": "#FBBF24",
@@ -110,10 +124,16 @@ class EduTrackApp(ctk.CTk):
 
     def __init__(self) -> None:
         super().__init__()
+        set_app_icon(self)
         self.title("EduTrack | Academic dashboard")
         self.geometry("1440x900")
         self.minsize(1100, 720)
         maximize_window(self)
+        self.accent_theme = DEFAULT_ACCENT_THEME
+        self.COLORS = {
+            **type(self).COLORS,
+            **accent_theme_colors(self.accent_theme),
+        }
         self.configure(fg_color=self.COLORS["window"])
 
         # The sign-in launcher passes the current profile through the process
@@ -124,8 +144,11 @@ class EduTrackApp(ctk.CTk):
             "semester": "Fall 2026",
             "role": os.environ.get("EDUTRACK_USER_ROLE", "Student"),
         }
+        self.is_faculty = self.student["role"].strip().casefold() == "faculty"
+        self.nav_items = self.FACULTY_NAV_ITEMS if self.is_faculty else self.NAV_ITEMS
         self.program_credits = self.PROGRAM_CREDITS
         self.target_cgpa = 3.85
+        self.current_cgpa: float | None = None
         self.gemini_api_key = ""
         self.enrollments: list[dict[str, Any]] = []
         self.data_error: str | None = None
@@ -140,6 +163,9 @@ class EduTrackApp(ctk.CTk):
         self._scroll_jobs: dict[ctk.CTkScrollableFrame, str] = {}
         self._chart_redraw_jobs: dict[ctk.CTkCanvas, str] = {}
         self._page_frames: dict[str, ctk.CTkScrollableFrame] = {}
+        self._built_pages: set[str] = set()
+        self._page_render_job: str | None = None
+        self._pending_page: str | None = None
         self.calculator_semesters: list[list[dict[str, str]]] = [[]]
         self.bind_all("<MouseWheel>", self._on_smooth_mousewheel, add="+")
         self.bind_all("<Button-4>", self._on_smooth_mousewheel, add="+")
@@ -199,7 +225,7 @@ class EduTrackApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.sidebar,
-            text="WORKSPACE",
+            text="FACULTY WORKSPACE" if self.is_faculty else "STUDENT WORKSPACE",
             font=app_font(family="Segoe UI", size=10, weight="bold"),
             text_color=self.COLORS["muted"],
             anchor="w",
@@ -207,7 +233,7 @@ class EduTrackApp(ctk.CTk):
 
         nav_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         nav_frame.grid(row=2, column=0, sticky="new", padx=12)
-        for title, number in self.NAV_ITEMS:
+        for title, number in self.nav_items:
             item = ctk.CTkFrame(nav_frame, fg_color="transparent", corner_radius=10)
             item.pack(fill="x", pady=3)
             indicator = ctk.CTkFrame(
@@ -395,84 +421,127 @@ class EduTrackApp(ctk.CTk):
         content.grid_columnconfigure(0, weight=1)
         self._register_smooth_scroll(content)
 
-        self._guide_section(
-            content,
-            "01",
-            "Start at Dashboard",
-            (
-                "Your Dashboard is the academic snapshot. Current CGPA is calculated "
-                "from your graded courses using their credit hours. Completed Credits "
-                "counts credits with valid grades; the goal card shows your saved "
-                "graduation target. Semester Trend compares your weighted GPA by term, "
-                "and Quick Insights highlights courses that may need extra attention."
-            ),
-        )
-        self._guide_section(
-            content,
-            "02",
-            "Plan your trajectory",
-            (
-                "Choose Trajectory Planner in the sidebar. The fields start with values "
-                "from your academic record and saved goal. Enter a current CGPA and "
-                "target from 0.00 to 4.00, plus completed and remaining credits, then "
-                "select Calculate required GPA. The result is the average GPA needed "
-                "across the remaining credits; a result over 4.00 is above the grading "
-                "scale. Use What-if Scenario below to drag between 2.00 and 4.00 and "
-                "instantly estimate the resulting graduation CGPA."
-            ),
-        )
-        self._guide_section(
-            content,
-            "03",
-            "Calculate semester and cumulative GPA",
-            (
-                "Open Semester Calculator, add subjects to each semester, and choose "
-                "a BUBT letter grade with the subject's credit value. Semester GPA "
-                "and overall CGPA update as you edit. Subject names are optional; "
-                "blank credits are ignored, and credits must be positive numbers."
-            ),
-        )
-        self._guide_section(
-            content,
-            "04",
-            "Ask the AI Advisor",
-            (
-                "Open AI Advisor, type a question in the prompt box, and select Get "
-                "academic guidance. The response uses your available CGPA and courses "
-                "to watch. Add a Gemini API key in Settings for cloud responses; without "
-                "one, EduTrack uses its local guidance fallback."
-            ),
-        )
-        self._guide_section(
-            content,
-            "05",
-            "Review Analytics",
-            (
-                "Analytics shows your overall graded-credit summary, semester GPA "
-                "trend, and letter-grade distribution. If a chart has no data, check "
-                "that graded course records are available for your student ID."
-            ),
-        )
-        self._guide_section(
-            content,
-            "06",
-            "Update Settings",
-            (
-                "Open Settings to change your display name, current semester, total "
-                "program credits, target CGPA, or optional Gemini API key. Select Save "
-                "settings to store changes locally. The dashboard refreshes with your "
-                "new target and credit total. Your account's Student ID is read-only."
-            ),
-        )
-        self._guide_section(
-            content,
-            "07",
-            "Switch users",
-            (
-                "Select Sign out at the bottom of the sidebar to return to the sign-in "
-                "screen. Your saved profile settings remain in the local database."
-            ),
-        )
+        if self.is_faculty:
+            self._guide_section(
+                content,
+                "01",
+                "Review your student roster",
+                (
+                    "The Faculty Control Panel lists students in your assigned "
+                    "sections. Search by student ID, name, CGPA, or status, then "
+                    "select a student to view course records or update an existing "
+                    "course grade."
+                ),
+            )
+            self._guide_section(
+                content,
+                "02",
+                "Manage section access",
+                (
+                    "Open Section Assignments to choose which student sections are "
+                    "included in your roster. Student records outside those sections "
+                    "cannot be opened or updated from the faculty workspace."
+                ),
+            )
+            self._guide_section(
+                content,
+                "03",
+                "Switch users",
+                (
+                    "Select Sign out at the bottom of the sidebar to return to the "
+                    "sign-in screen. Your section assignments remain saved locally."
+                ),
+            )
+        else:
+            self._guide_section(
+                content,
+                "01",
+                "Start at Dashboard",
+                (
+                    "Your Dashboard is the academic snapshot. Current CGPA is calculated "
+                    "from your graded courses using their credit hours. Completed Credits "
+                    "counts credits with valid grades; the goal card shows your saved "
+                    "graduation target. Semester Trend compares your weighted GPA by term, "
+                    "and Quick Insights highlights courses that may need extra attention."
+                ),
+            )
+            self._guide_section(
+                content,
+                "02",
+                "Plan your trajectory",
+                (
+                    "Choose Trajectory Planner in the sidebar. The fields start with values "
+                    "from your academic record and saved goal. Enter a current CGPA and "
+                    "target from 0.00 to 4.00, plus completed and remaining credits, then "
+                    "select Calculate required GPA. The result is the average GPA needed "
+                    "across the remaining credits; a result over 4.00 is above the grading "
+                    "scale. Use What-if Scenario below to drag between 2.00 and 4.00 and "
+                    "instantly estimate the resulting graduation CGPA."
+                ),
+            )
+            self._guide_section(
+                content,
+                "03",
+                "Calculate semester and cumulative GPA",
+                (
+                    "Open CGPA Calculator, add subjects to each semester, and choose "
+                    "a BUBT letter grade with the subject's credit value. Semester GPA "
+                    "and overall CGPA update as you edit. Subject names are optional; "
+                    "blank credits are ignored, and credits must be positive numbers."
+                ),
+            )
+            self._guide_section(
+                content,
+                "04",
+                "Ask the AI Advisor",
+                (
+                    "Open AI Advisor, type a question in the prompt box, and select Get "
+                    "academic guidance. The response uses your available CGPA and courses "
+                    "to watch. Add a Gemini API key in Settings for cloud responses; without "
+                    "one, EduTrack uses its local guidance fallback."
+                ),
+            )
+            self._guide_section(
+                content,
+                "05",
+                "Review Analytics",
+                (
+                    "Analytics shows your overall graded-credit summary, semester GPA "
+                    "trend, and letter-grade distribution. If a chart has no data, check "
+                    "that graded course records are available for your student ID."
+                ),
+            )
+            self._guide_section(
+                content,
+                "06",
+                "Check attendance and your routine",
+                (
+                    "Open Attendance & Schedule to review the weekly class routine and "
+                    "attendance percentages for your enrolled courses. Enter total and "
+                    "attended class counts to save or update attendance. Percentages below "
+                    "75% are highlighted as warnings."
+                ),
+            )
+            self._guide_section(
+                content,
+                "07",
+                "Update Settings",
+                (
+                    "Open Settings to change your display name, current semester, total "
+                    "program credits, target CGPA, or optional Gemini API key. Select Save "
+                    "settings to store changes locally. The dashboard refreshes with your "
+                    "new target and credit total. Your account's Student ID is read-only."
+                ),
+            )
+            self._guide_section(
+                content,
+                "08",
+                "Switch users",
+                (
+                    "Select Sign out at the bottom of the sidebar to return to the sign-in "
+                    "screen. Your saved profile settings remain in the local database."
+                ),
+            )
 
         footer = ctk.CTkFrame(
             guide,
@@ -491,7 +560,7 @@ class EduTrackApp(ctk.CTk):
             command=guide.destroy,
         )
         self._enable_button_transition(
-            close_button, self.COLORS["blue"], "#2563EB"
+            close_button, self.COLORS["blue"], self.COLORS["blue_hover"]
         )
         close_button.grid(row=0, column=0, sticky="e", padx=20, pady=14)
         guide.protocol("WM_DELETE_WINDOW", guide.destroy)
@@ -603,14 +672,15 @@ class EduTrackApp(ctk.CTk):
             if not button.winfo_exists():
                 self._button_color_jobs.pop(button, None)
                 return
-            progress = min(frame / 6, 1)
+            progress = min(frame / 8, 1)
+            progress = progress * progress * (3 - 2 * progress)
             color = "#" + "".join(
                 f"{round(begin + (finish - begin) * progress):02X}"
                 for begin, finish in zip(start, end)
             )
             button.configure(fg_color=color)
-            if frame < 6:
-                self._button_color_jobs[button] = button.after(18, step, frame + 1)
+            if frame < 8:
+                self._button_color_jobs[button] = button.after(12, step, frame + 1)
             else:
                 self._button_color_jobs.pop(button, None)
 
@@ -714,10 +784,13 @@ class EduTrackApp(ctk.CTk):
                 self.program_credits = float(profile["program_credits"])
                 self.target_cgpa = float(profile["target_cgpa"])
             settings = AcademicCRUD.get_user_settings(self.student["student_id"])
+            self.accent_theme = settings["accent_theme"]
+            self.COLORS.update(accent_theme_colors(self.accent_theme))
             self.student["name"] = settings["display_name"]
             self.student["semester"] = settings["current_semester"]
             self.program_credits = float(settings["program_credits"])
             self.target_cgpa = float(settings["target_cgpa"])
+            self.current_cgpa = settings["current_cgpa"]
             self.gemini_api_key = settings["gemini_api_key"]
             self.enrollments = AcademicCRUD.get_student_enrollments(
                 self.student["student_id"]
@@ -779,9 +852,21 @@ class EduTrackApp(ctk.CTk):
         }
 
     def show_page(self, page: str) -> None:
-        """Show a cached page, constructing it only the first time it is visited."""
-        if page == self.current_page and page in self._page_frames:
+        """Switch pages immediately and defer first-time page construction until idle."""
+        if page not in {title for title, _ in self.nav_items}:
+            raise ValueError(f"Page {page!r} is not available in this workspace.")
+        if page == self.current_page and (
+            page in self._built_pages or self._pending_page == page
+        ):
             return
+        if self._page_render_job is not None:
+            try:
+                self.after_cancel(self._page_render_job)
+            except tk.TclError:
+                pass
+            self._page_render_job = None
+            self._pending_page = None
+
         previous_frame = self._page_frames.get(self.current_page or "")
         if previous_frame is not None:
             previous_frame.grid_remove()
@@ -806,7 +891,7 @@ class EduTrackApp(ctk.CTk):
             "●  DATA CONNECTION ISSUE" if self.data_error else "●  LIVE WORKSPACE",
             self.COLORS["amber"] if self.data_error else self.COLORS["green"],
         )
-        title, subtitle = {
+        page_titles = {
             "Dashboard": (
                 "Your academic journey",
                 "A clear view of your progress, goals, and next steps.",
@@ -815,8 +900,8 @@ class EduTrackApp(ctk.CTk):
                 "Trajectory planner",
                 "Explore the GPA pace needed to reach your graduation goal.",
             ),
-            "Semester Calculator": (
-                "CGPA & semester calculator",
+            "CGPA Calculator": (
+                "CGPA Calculator",
                 "Build semesters and calculate credit-weighted GPA as you enter grades.",
             ),
             "AI Advisor": (
@@ -827,14 +912,42 @@ class EduTrackApp(ctk.CTk):
                 "Performance analytics",
                 "Review semester performance and the grades behind your CGPA.",
             ),
+            "Attendance & Schedule": (
+                "Attendance & schedule",
+                "Review your weekly class routine and track course attendance.",
+            ),
             "Settings": (
                 "Workspace settings",
                 "Manage the student profile and planning assumptions shown here.",
             ),
-        }[page]
+        }
+        if self.is_faculty:
+            page_titles.update(
+                {
+                    "Dashboard": (
+                        "Faculty control panel",
+                        "Review students and manage academic records in your assigned sections.",
+                    ),
+                    "Section Assignments": (
+                        "Section assignments",
+                        "Choose which student sections are included in your faculty roster.",
+                    ),
+                }
+            )
+        title, subtitle = page_titles[page]
         self.page_title.configure(text=title)
         self.page_subtitle.configure(text=subtitle)
 
+        builders = {
+            "Dashboard": self._build_dashboard,
+            "Section Assignments": self._build_faculty_section_assignments,
+            "Trajectory Planner": self._build_planner,
+            "CGPA Calculator": self._build_semester_calculator,
+            "AI Advisor": self._build_advisor,
+            "Analytics": self._build_analytics,
+            "Attendance & Schedule": self._build_attendance_schedule,
+            "Settings": self._build_settings,
+        }
         page_frame = self._page_frames.get(page)
         if page_frame is None:
             page_frame = ctk.CTkScrollableFrame(
@@ -843,21 +956,23 @@ class EduTrackApp(ctk.CTk):
                 corner_radius=0,
                 scrollbar_button_color=self.COLORS["border"],
             )
-            page_frame.grid(row=0, column=0, sticky="nsew")
             page_frame.grid_columnconfigure(0, weight=1)
             self._page_frames[page] = page_frame
             self._register_smooth_scroll(page_frame)
-            builders = {
-                "Dashboard": self._build_dashboard,
-                "Trajectory Planner": self._build_planner,
-                "Semester Calculator": self._build_semester_calculator,
-                "AI Advisor": self._build_advisor,
-                "Analytics": self._build_analytics,
-                "Settings": self._build_settings,
-            }
-            builders[page](page_frame)
-        else:
+        if page in self._built_pages:
             page_frame.grid()
+        else:
+            def render_page() -> None:
+                self._page_render_job = None
+                self._pending_page = None
+                if not self.winfo_exists() or self.current_page != page:
+                    return
+                builders[page](page_frame)
+                self._built_pages.add(page)
+                page_frame.grid(row=0, column=0, sticky="nsew")
+
+            self._pending_page = page
+            self._page_render_job = self.after_idle(render_page)
         self.current_page = page
 
     def _register_smooth_scroll(self, frame: ctk.CTkScrollableFrame) -> None:
@@ -943,6 +1058,13 @@ class EduTrackApp(ctk.CTk):
             self._pending_scroll_pixels.pop(frame, None)
 
     def _discard_cached_pages(self) -> None:
+        if self._page_render_job is not None:
+            try:
+                self.after_cancel(self._page_render_job)
+            except tk.TclError:
+                pass
+            self._page_render_job = None
+            self._pending_page = None
         for frame in self._page_frames.values():
             try:
                 frame.destroy()
@@ -962,6 +1084,7 @@ class EduTrackApp(ctk.CTk):
                 pass
         self._chart_redraw_jobs.clear()
         self._page_frames.clear()
+        self._built_pages.clear()
         live_frames: list[ctk.CTkScrollableFrame] = []
         for frame in self._scrollable_frames:
             try:
@@ -1031,7 +1154,503 @@ class EduTrackApp(ctk.CTk):
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
+    def _style_faculty_treeview(self) -> None:
+        style = ttk.Style(self)
+        style.configure(
+            "EduTrack.Treeview",
+            background=self.COLORS["surface"],
+            fieldbackground=self.COLORS["surface"],
+            foreground=self.COLORS["text"],
+            rowheight=32,
+            borderwidth=0,
+            font=("Segoe UI", 10),
+        )
+        style.map(
+            "EduTrack.Treeview",
+            background=[("selected", self.COLORS["blue"])],
+            foreground=[("selected", self.COLORS["text"])],
+        )
+        style.configure(
+            "EduTrack.Treeview.Heading",
+            background=self.COLORS["surface_alt"],
+            foreground=self.COLORS["text"],
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+        )
+        style.map(
+            "EduTrack.Treeview.Heading",
+            background=[("active", self.COLORS["surface_alt"])],
+        )
+
+    def _build_faculty_dashboard(self, parent: ctk.CTkFrame) -> None:
+        banner = ctk.CTkFrame(
+            parent,
+            fg_color="#142D50",
+            corner_radius=18,
+            border_width=1,
+            border_color="#24456D",
+        )
+        banner.pack(fill="x", pady=(0, 20))
+        ctk.CTkLabel(
+            banner,
+            text=f"WELCOME, {self.student['name'].upper()}",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color="#AFCDF2",
+        ).pack(anchor="w", padx=24, pady=(20, 6))
+        ctk.CTkLabel(
+            banner,
+            text="Faculty Control Panel",
+            font=app_font(family="Segoe UI", size=23, weight="bold"),
+            text_color=self.COLORS["text"],
+        ).pack(anchor="w", padx=24)
+        ctk.CTkLabel(
+            banner,
+            text="Search your assigned sections and review student academic records.",
+            font=app_font(family="Segoe UI", size=11),
+            text_color="#C3D5EB",
+        ).pack(anchor="w", padx=24, pady=(7, 20))
+
+        try:
+            from modules.crud import AcademicCRUD
+
+            self.faculty_roster = AcademicCRUD.get_faculty_students(
+                self.student["student_id"]
+            )
+            roster_error = None
+        except Exception as exc:
+            self.faculty_roster = []
+            roster_error = str(exc)
+
+        summary = ctk.CTkFrame(parent, fg_color="transparent")
+        summary.pack(fill="x", pady=(0, 18))
+        summary.grid_columnconfigure(0, weight=1)
+        self._metric_card(
+            summary,
+            0,
+            "TOTAL ENROLLED STUDENTS",
+            str(len(self.faculty_roster)),
+            "Students in your assigned sections",
+            None,
+            self.COLORS["cyan"],
+            "Section-scoped roster",
+        )
+
+        roster_card = self._card(parent)
+        roster_card.pack(fill="both", expand=True)
+        self._section_heading(
+            roster_card,
+            "Student roster",
+            "SEARCHABLE · ASSIGNED SECTIONS ONLY",
+        )
+        toolbar = ctk.CTkFrame(roster_card, fg_color="transparent")
+        toolbar.pack(fill="x", padx=18, pady=(0, 12))
+        toolbar.grid_columnconfigure(0, weight=1)
+        search = ctk.CTkEntry(
+            toolbar,
+            height=38,
+            corner_radius=9,
+            placeholder_text="Search student ID, name, CGPA, or status",
+        )
+        search.grid(row=0, column=0, sticky="ew", padx=(0, 12))
+        self.faculty_roster_count = ctk.CTkLabel(
+            toolbar,
+            text="",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+        )
+        self.faculty_roster_count.grid(row=0, column=1, sticky="e")
+
+        table_frame = ctk.CTkFrame(roster_card, fg_color="transparent")
+        table_frame.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
+        self._style_faculty_treeview()
+        self.faculty_roster_tree = ttk.Treeview(
+            table_frame,
+            columns=("student_id", "name", "cgpa", "status"),
+            show="headings",
+            height=12,
+            style="EduTrack.Treeview",
+            selectmode="browse",
+        )
+        for column, heading, width in (
+            ("student_id", "Student ID", 150),
+            ("name", "Name", 280),
+            ("cgpa", "Current CGPA", 140),
+            ("status", "Status", 180),
+        ):
+            self.faculty_roster_tree.heading(column, text=heading)
+            self.faculty_roster_tree.column(
+                column, width=width, anchor="w", stretch=column == "name"
+            )
+        scrollbar = ttk.Scrollbar(
+            table_frame,
+            orient="vertical",
+            command=self.faculty_roster_tree.yview,
+        )
+        self.faculty_roster_tree.configure(yscrollcommand=scrollbar.set)
+        self.faculty_roster_tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        search.bind(
+            "<KeyRelease>",
+            lambda _event: self._filter_faculty_roster(search.get()),
+        )
+        self.faculty_roster_tree.bind(
+            "<Double-1>", lambda _event: self._open_selected_faculty_student()
+        )
+
+        actions = ctk.CTkFrame(roster_card, fg_color="transparent")
+        actions.pack(fill="x", padx=18, pady=(0, 18))
+        manage_button = ctk.CTkButton(
+            actions,
+            text="View / manage academic records",
+            height=38,
+            corner_radius=9,
+            command=self._open_selected_faculty_student,
+        )
+        manage_button.pack(side="left")
+        self._enable_button_transition(
+            manage_button, self.COLORS["blue"], self.COLORS["blue_hover"]
+        )
+        if roster_error:
+            self._notice(
+                roster_card,
+                f"Could not load the faculty roster: {roster_error}",
+                self.COLORS["red"],
+            )
+        elif not self.faculty_roster:
+            self._notice(
+                roster_card,
+                "No students are assigned to your sections. Choose sections in "
+                "Section Assignments to populate this roster.",
+                self.COLORS["muted"],
+            )
+        self._filter_faculty_roster("")
+
+    def _filter_faculty_roster(self, query: str) -> None:
+        tree = self.faculty_roster_tree
+        for item in tree.get_children():
+            tree.delete(item)
+        normalized_query = query.strip().casefold()
+        visible_count = 0
+        for student in self.faculty_roster:
+            cgpa = student["current_cgpa"]
+            values = (
+                student["student_id"],
+                student["name"],
+                f"{cgpa:.2f}" if cgpa is not None else "No grades",
+                student["status"],
+            )
+            if normalized_query and not any(
+                normalized_query in str(value).casefold() for value in values
+            ):
+                continue
+            tree.insert("", "end", iid=student["student_id"], values=values)
+            visible_count += 1
+        self.faculty_roster_count.configure(
+            text=f"Showing {visible_count} of {len(self.faculty_roster)} students"
+        )
+
+    def _open_selected_faculty_student(self) -> None:
+        selection = self.faculty_roster_tree.selection()
+        if not selection:
+            self._show_header_status(
+                "SELECT A STUDENT FIRST",
+                self.COLORS["amber"],
+                reset_after=2500,
+            )
+            return
+        self._open_faculty_student_records(selection[0])
+
+    def _populate_faculty_records(
+        self,
+        tree: ttk.Treeview,
+        enrollments: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        for item in tree.get_children():
+            tree.delete(item)
+        records: dict[str, dict[str, Any]] = {}
+        for enrollment in enrollments:
+            record_id = str(enrollment["enrollment_id"])
+            records[record_id] = enrollment
+            tree.insert(
+                "",
+                "end",
+                iid=record_id,
+                values=(
+                    enrollment["course_code"],
+                    enrollment["course_title"],
+                    f"{float(enrollment['credit_hours']):g}",
+                    enrollment["semester_no"],
+                    enrollment["letter_grade"] or "Not graded",
+                ),
+            )
+        return records
+
+    def _open_faculty_student_records(self, student_id: str) -> None:
+        from modules.crud import AcademicCRUD
+
+        try:
+            enrollments = AcademicCRUD.get_faculty_student_enrollments(
+                self.student["student_id"], student_id
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Could not open student records",
+                str(exc),
+                parent=self,
+            )
+            return
+
+        student_name = next(
+            (
+                student["name"]
+                for student in self.faculty_roster
+                if student["student_id"] == student_id
+            ),
+            student_id,
+        )
+        window = ctk.CTkToplevel(self)
+        window.title(f"Academic records | {student_name}")
+        window.geometry("900x590")
+        window.minsize(760, 480)
+        window.configure(fg_color=self.COLORS["window"])
+        window.transient(self)
+        window.grid_columnconfigure(0, weight=1)
+        window.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(
+            window,
+            text=f"{student_name}  ·  {student_id}",
+            font=app_font(family="Segoe UI", size=19, weight="bold"),
+            text_color=self.COLORS["text"],
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 5))
+        ctk.CTkLabel(
+            window,
+            text="Select an existing course record to review or update its letter grade.",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 12))
+
+        table_frame = ctk.CTkFrame(window, fg_color="transparent")
+        table_frame.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 12))
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
+        self._style_faculty_treeview()
+        records_tree = ttk.Treeview(
+            table_frame,
+            columns=("course", "title", "credits", "semester", "grade"),
+            show="headings",
+            height=12,
+            style="EduTrack.Treeview",
+            selectmode="browse",
+        )
+        for column, heading, width in (
+            ("course", "Course", 110),
+            ("title", "Course title", 290),
+            ("credits", "Credits", 80),
+            ("semester", "Semester", 100),
+            ("grade", "Grade", 110),
+        ):
+            records_tree.heading(column, text=heading)
+            records_tree.column(
+                column, width=width, anchor="w", stretch=column == "title"
+            )
+        scrollbar = ttk.Scrollbar(
+            table_frame, orient="vertical", command=records_tree.yview
+        )
+        records_tree.configure(yscrollcommand=scrollbar.set)
+        records_tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        records_by_id = self._populate_faculty_records(records_tree, enrollments)
+
+        edit_frame = ctk.CTkFrame(window, fg_color="transparent")
+        edit_frame.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 18))
+        edit_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            edit_frame,
+            text="Selected record grade",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color=self.COLORS["muted"],
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        grade_selector = ctk.CTkComboBox(
+            edit_frame,
+            values=["Not graded", *self.GRADE_ORDER],
+            width=150,
+            height=36,
+            corner_radius=9,
+            state="readonly",
+        )
+        grade_selector.set("Not graded")
+        grade_selector.grid(row=0, column=1, sticky="w")
+        status = ctk.CTkLabel(
+            edit_frame,
+            text="",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+        )
+        status.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        def select_record(_event: tk.Event | None = None) -> None:
+            selection = records_tree.selection()
+            if selection:
+                grade_selector.set(
+                    records_by_id[selection[0]]["letter_grade"] or "Not graded"
+                )
+
+        records_tree.bind("<<TreeviewSelect>>", select_record)
+
+        def save_grade() -> None:
+            selection = records_tree.selection()
+            if not selection:
+                status.configure(
+                    text="Select a course record before saving.",
+                    text_color=self.COLORS["amber"],
+                )
+                return
+            record = records_by_id[selection[0]]
+            selected_grade = grade_selector.get()
+            try:
+                AcademicCRUD.update_faculty_student_grade(
+                    self.student["student_id"],
+                    student_id,
+                    record["course_code"],
+                    record["semester_no"],
+                    None if selected_grade == "Not graded" else selected_grade,
+                )
+                updated_enrollments = AcademicCRUD.get_faculty_student_enrollments(
+                    self.student["student_id"], student_id
+                )
+                records_by_id.clear()
+                records_by_id.update(
+                    self._populate_faculty_records(records_tree, updated_enrollments)
+                )
+                self.faculty_roster = AcademicCRUD.get_faculty_students(
+                    self.student["student_id"]
+                )
+                self._filter_faculty_roster("")
+            except Exception as exc:
+                status.configure(
+                    text=f"Could not save grade: {exc}",
+                    text_color=self.COLORS["red"],
+                )
+                return
+            records_tree.selection_set(selection[0])
+            status.configure(
+                text="Grade saved successfully.",
+                text_color=self.COLORS["green"],
+            )
+
+        save_button = ctk.CTkButton(
+            edit_frame,
+            text="Save grade",
+            height=36,
+            corner_radius=9,
+            command=save_grade,
+        )
+        save_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
+        self._enable_button_transition(
+            save_button, self.COLORS["blue"], self.COLORS["blue_hover"]
+        )
+
+    def _build_faculty_section_assignments(self, parent: ctk.CTkFrame) -> None:
+        card = self._card(parent)
+        card.pack(fill="x")
+        self._section_heading(card, "Assigned sections", "FACULTY ROSTER ACCESS")
+        self._helper_text(
+            card,
+            "Choose the student sections that should appear in your roster. "
+            "Access is restricted to students in the selected sections.",
+        )
+        try:
+            from modules.crud import AcademicCRUD
+
+            available_sections = AcademicCRUD.get_faculty_section_options()
+            assigned_sections = set(
+                AcademicCRUD.get_faculty_sections(self.student["student_id"])
+            )
+        except Exception as exc:
+            self._notice(
+                card,
+                f"Could not load section assignments: {exc}",
+                self.COLORS["red"],
+            )
+            return
+
+        if not available_sections:
+            self._notice(
+                card,
+                "No student sections are available yet. Add student profiles before "
+                "assigning section access.",
+                self.COLORS["amber"],
+            )
+            return
+
+        self.faculty_section_vars: dict[str, tk.BooleanVar] = {}
+        for section in available_sections:
+            selected = tk.BooleanVar(value=section in assigned_sections)
+            self.faculty_section_vars[section] = selected
+            checkbox = ctk.CTkCheckBox(
+                card,
+                text=f"Section {section}",
+                variable=selected,
+                height=34,
+                font=app_font(family="Segoe UI", size=11),
+                text_color=self.COLORS["text"],
+                fg_color=self.COLORS["blue"],
+                hover_color=self.COLORS["blue_hover"],
+            )
+            checkbox.pack(anchor="w", padx=20, pady=4)
+
+        status = ctk.CTkLabel(
+            card,
+            text="",
+            font=app_font(family="Segoe UI", size=10),
+            text_color=self.COLORS["muted"],
+        )
+        status.pack(anchor="w", padx=20, pady=(10, 0))
+
+        def save_assignments() -> None:
+            sections = [
+                section
+                for section, variable in self.faculty_section_vars.items()
+                if variable.get()
+            ]
+            try:
+                AcademicCRUD.save_faculty_sections(
+                    self.student["student_id"], sections
+                )
+            except Exception as exc:
+                status.configure(
+                    text=f"Could not save section assignments: {exc}",
+                    text_color=self.COLORS["red"],
+                )
+                return
+            self._discard_cached_pages()
+            self.show_page("Section Assignments")
+            self._show_header_status(
+                "✓  SECTION ASSIGNMENTS SAVED",
+                self.COLORS["green"],
+                reset_after=3500,
+            )
+
+        save_button = ctk.CTkButton(
+            card,
+            text="Save section assignments",
+            height=40,
+            corner_radius=9,
+            command=save_assignments,
+        )
+        save_button.pack(anchor="w", padx=20, pady=(14, 20))
+        self._enable_button_transition(
+            save_button, self.COLORS["blue"], self.COLORS["blue_hover"]
+        )
+
     def _build_dashboard(self, parent: ctk.CTkFrame) -> None:
+        if self.is_faculty:
+            self._build_faculty_dashboard(parent)
+            return
         summary = self._summary()
         banner = ctk.CTkFrame(
             parent,
@@ -1486,7 +2105,9 @@ class EduTrackApp(ctk.CTk):
             font=app_font(family="Segoe UI", size=11, weight="bold"),
             command=self._calculate_trajectory,
         )
-        self._enable_button_transition(calculate_button, self.COLORS["blue"], "#2563EB")
+        self._enable_button_transition(
+            calculate_button, self.COLORS["blue"], self.COLORS["blue_hover"]
+        )
         calculate_button.pack(side="left")
         self.planner_result = ctk.CTkLabel(
             actions,
@@ -1759,7 +2380,7 @@ class EduTrackApp(ctk.CTk):
         )
         add_semester_button.pack(side="left")
         self._enable_button_transition(
-            add_semester_button, self.COLORS["blue"], "#2563EB"
+            add_semester_button, self.COLORS["blue"], self.COLORS["blue_hover"]
         )
         self.calculator_semester_container = ctk.CTkFrame(
             parent, fg_color="transparent"
@@ -1832,7 +2453,7 @@ class EduTrackApp(ctk.CTk):
                     corner_radius=8,
                     fg_color=self.COLORS["surface_alt"],
                     button_color=self.COLORS["blue"],
-                    button_hover_color="#2563EB",
+                    button_hover_color=self.COLORS["blue_hover"],
                     command=lambda grade, s=semester_index, r=row_index - 1:
                     self._update_calculator_subject(s, r, "grade", grade),
                 )
@@ -2027,7 +2648,7 @@ class EduTrackApp(ctk.CTk):
             command=self._request_advice,
         )
         self._enable_button_transition(
-            self.advisor_button, self.COLORS["blue"], "#2563EB"
+            self.advisor_button, self.COLORS["blue"], self.COLORS["blue_hover"]
         )
         self.advisor_button.pack(side="left")
         self.advisor_status = ctk.CTkLabel(
@@ -2313,49 +2934,319 @@ class EduTrackApp(ctk.CTk):
                 anchor=count_anchor,
             )
 
-    def _build_settings(self, parent: ctk.CTkFrame) -> None:
-        card = self._card(parent)
-        card.pack(fill="x")
-        ctk.CTkLabel(
-            card,
-            text="Student profile",
-            font=app_font(family="Segoe UI", size=15, weight="bold"),
-            text_color=self.COLORS["text"],
-        ).pack(anchor="w", padx=18, pady=(18, 4))
-        ctk.CTkLabel(
-            card,
-            text="These values personalize the current local workspace.",
-            font=app_font(family="Segoe UI", size=10),
-            text_color=self.COLORS["muted"],
-        ).pack(anchor="w", padx=18, pady=(0, 16))
-        ctk.CTkLabel(
-            card,
-            text=(
-                "Update your display details and graduation assumptions below. "
-                "Select Save settings to store your changes and refresh the dashboard."
-            ),
-            font=app_font(family="Segoe UI", size=10),
-            text_color=self.COLORS["muted"],
-            wraplength=800,
-            justify="left",
-        ).pack(anchor="w", padx=18, pady=(0, 10))
-        self.settings_entries: dict[str, ctk.CTkEntry] = {}
-        for label, key, value in (
-            ("Display name", "name", self.student["name"]),
-            ("Student ID", "student_id", self.student["student_id"]),
-            ("Current semester", "semester", self.student["semester"]),
-            ("Program credits", "program_credits", str(self.program_credits)),
-            ("Target CGPA", "target_cgpa", f"{self.target_cgpa:.2f}"),
-            ("Gemini API key", "gemini_api_key", self.gemini_api_key),
-        ):
+    def _build_attendance_schedule(self, parent: ctk.CTkFrame) -> None:
+        from modules.crud import AcademicCRUD
+
+        try:
+            routines = AcademicCRUD.get_routines()
+            attendance_records = AcademicCRUD.get_attendance(
+                self.student["student_id"]
+            )
+        except Exception as exc:
+            self._notice(
+                parent,
+                f"Could not load attendance and schedule: {exc}",
+                self.COLORS["red"],
+            )
+            return
+
+        routine_card = self._card(parent)
+        routine_card.pack(fill="x", pady=(0, 16))
+        self._section_heading(routine_card, "Weekly class routine")
+        if not routines:
+            self._helper_text(
+                routine_card,
+                "No classes have been added to the weekly routine yet.",
+            )
+        else:
+            by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for routine in routines:
+                by_day[routine["day"]].append(routine)
+            for day in AcademicCRUD.WEEKDAYS:
+                day_routines = by_day.get(day)
+                if not day_routines:
+                    continue
+                ctk.CTkLabel(
+                    routine_card,
+                    text=day.upper(),
+                    font=app_font(family="Segoe UI", size=9, weight="bold"),
+                    text_color=self.COLORS["cyan"],
+                ).pack(anchor="w", padx=20, pady=(4, 7))
+                for routine in day_routines:
+                    row = ctk.CTkFrame(
+                        routine_card,
+                        fg_color=self.COLORS["surface_alt"],
+                        corner_radius=10,
+                    )
+                    row.pack(fill="x", padx=18, pady=(0, 7))
+                    row.grid_columnconfigure(1, weight=1)
+                    ctk.CTkLabel(
+                        row,
+                        text=routine["time"],
+                        width=150,
+                        anchor="w",
+                        font=app_font(family="Segoe UI", size=10, weight="bold"),
+                        text_color=self.COLORS["text"],
+                    ).grid(row=0, column=0, sticky="w", padx=12, pady=11)
+                    ctk.CTkLabel(
+                        row,
+                        text=f"{routine['course_code']}  ·  {routine['course_title']}",
+                        anchor="w",
+                        font=app_font(family="Segoe UI", size=10),
+                        text_color=self.COLORS["text"],
+                    ).grid(row=0, column=1, sticky="ew", padx=8, pady=11)
+                    ctk.CTkLabel(
+                        row,
+                        text=routine["room"],
+                        width=100,
+                        anchor="e",
+                        font=app_font(family="Segoe UI", size=10),
+                        text_color=self.COLORS["muted"],
+                    ).grid(row=0, column=2, sticky="e", padx=12, pady=11)
+            ctk.CTkFrame(
+                routine_card, height=8, fg_color="transparent"
+            ).pack(fill="x")
+
+        attendance_card = self._card(parent)
+        attendance_card.pack(fill="x")
+        self._section_heading(
+            attendance_card,
+            "Course attendance",
+            "Warnings appear below 75%",
+        )
+        self._helper_text(
+            attendance_card,
+            "Update the number of classes held and attended for each course, then save. "
+            "Only courses with recorded classes have a percentage.",
+        )
+        attendance_by_course = {
+            record["course_code"]: record for record in attendance_records
+        }
+        course_records: dict[str, dict[str, Any]] = {}
+        for enrollment in self.enrollments:
+            course_records.setdefault(
+                enrollment["course_code"],
+                {
+                    "course_code": enrollment["course_code"],
+                    "course_title": enrollment["course_title"],
+                    "total_classes": 0,
+                    "attended_classes": 0,
+                },
+            )
+        for course_code, record in attendance_by_course.items():
+            course_records[course_code] = record
+
+        if not course_records:
+            self._helper_text(
+                attendance_card,
+                "No enrolled courses are available to track yet.",
+            )
+            return
+
+        self._attendance_inputs: dict[
+            str,
+            tuple[
+                ctk.CTkEntry,
+                ctk.CTkEntry,
+                ctk.CTkLabel,
+                ctk.CTkLabel,
+            ],
+        ] = {}
+        for course_code, record in sorted(course_records.items()):
+            row = ctk.CTkFrame(
+                attendance_card,
+                fg_color=self.COLORS["surface_alt"],
+                corner_radius=11,
+            )
+            row.pack(fill="x", padx=18, pady=(0, 9))
+            row.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(
-                card,
+                row,
+                text=f"{course_code}  ·  {record['course_title']}",
+                anchor="w",
+                font=app_font(family="Segoe UI", size=11, weight="bold"),
+                text_color=self.COLORS["text"],
+            ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 6))
+
+            count_fields = ctk.CTkFrame(row, fg_color="transparent")
+            count_fields.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 11))
+            ctk.CTkLabel(
+                count_fields,
+                text="Total",
+                font=app_font(family="Segoe UI", size=9),
+                text_color=self.COLORS["muted"],
+            ).pack(side="left", padx=(0, 5))
+            total_entry = ctk.CTkEntry(count_fields, width=68, height=32)
+            total_entry.insert(0, str(record["total_classes"]))
+            total_entry.pack(side="left", padx=(0, 14))
+            ctk.CTkLabel(
+                count_fields,
+                text="Attended",
+                font=app_font(family="Segoe UI", size=9),
+                text_color=self.COLORS["muted"],
+            ).pack(side="left", padx=(0, 5))
+            attended_entry = ctk.CTkEntry(count_fields, width=68, height=32)
+            attended_entry.insert(0, str(record["attended_classes"]))
+            attended_entry.pack(side="left", padx=(0, 12))
+            save_button = ctk.CTkButton(
+                count_fields,
+                text="Save",
+                width=76,
+                height=32,
+                corner_radius=8,
+                command=lambda code=course_code: self._save_attendance_record(code),
+            )
+            self._enable_button_transition(
+                save_button, self.COLORS["blue"], self.COLORS["blue_hover"]
+            )
+            save_button.pack(side="left")
+
+            percentage = record.get("attendance_percentage")
+            if percentage is None:
+                percentage_text = "—"
+                percentage_color = self.COLORS["amber"]
+                status_text = "No classes recorded"
+                status_color = self.COLORS["muted"]
+            elif percentage < 75:
+                percentage_text = f"{percentage:.1f}%"
+                percentage_color = self.COLORS["red"]
+                status_text = "Below 75% — attendance warning"
+                status_color = self.COLORS["red"]
+            else:
+                percentage_text = f"{percentage:.1f}%"
+                percentage_color = self.COLORS["green"]
+                status_text = "Meets the 75% attendance minimum"
+                status_color = self.COLORS["green"]
+            percentage_label = ctk.CTkLabel(
+                row,
+                text=percentage_text,
+                font=app_font(family="Segoe UI", size=18, weight="bold"),
+                text_color=percentage_color,
+            )
+            percentage_label.grid(row=0, column=1, sticky="e", padx=14, pady=(10, 0))
+            status_label = ctk.CTkLabel(
+                row,
+                text=status_text,
+                font=app_font(family="Segoe UI", size=9, weight="bold"),
+                text_color=status_color,
+            )
+            status_label.grid(row=1, column=1, sticky="e", padx=14, pady=(0, 11))
+            self._attendance_inputs[course_code] = (
+                total_entry,
+                attended_entry,
+                percentage_label,
+                status_label,
+            )
+
+    def _save_attendance_record(self, course_code: str) -> None:
+        total_entry, attended_entry, percentage_label, status_label = (
+            self._attendance_inputs[course_code]
+        )
+        try:
+            total_classes = int(total_entry.get().strip())
+            attended_classes = int(attended_entry.get().strip())
+            from modules.crud import AcademicCRUD
+
+            AcademicCRUD.save_attendance(
+                self.student["student_id"],
+                course_code,
+                total_classes,
+                attended_classes,
+            )
+        except ValueError as exc:
+            status_label.configure(
+                text=(
+                    str(exc)
+                    if "cannot exceed" in str(exc)
+                    else "Enter whole-number counts; attended classes cannot exceed total."
+                ),
+                text_color=self.COLORS["red"],
+            )
+            return
+        except Exception as exc:
+            status_label.configure(
+                text=f"Could not save attendance: {exc}",
+                text_color=self.COLORS["red"],
+            )
+            return
+
+        if total_classes == 0:
+            percentage_label.configure(
+                text="—", text_color=self.COLORS["amber"]
+            )
+            status_label.configure(
+                text="No classes recorded",
+                text_color=self.COLORS["muted"],
+            )
+            return
+
+        percentage = attended_classes / total_classes * 100
+        if percentage < 75:
+            percentage_label.configure(
+                text=f"{percentage:.1f}%", text_color=self.COLORS["red"]
+            )
+            status_label.configure(
+                text="Below 75% — attendance warning",
+                text_color=self.COLORS["red"],
+            )
+        else:
+            percentage_label.configure(
+                text=f"{percentage:.1f}%", text_color=self.COLORS["green"]
+            )
+            status_label.configure(
+                text="Attendance saved · meets the 75% minimum",
+                text_color=self.COLORS["green"],
+            )
+
+    def _build_settings(self, parent: ctk.CTkFrame) -> None:
+        def create_section(title: str, detail: str) -> ctk.CTkFrame:
+            card = self._card(parent)
+            card.pack(fill="x", pady=(0, 14))
+            heading = ctk.CTkFrame(card, fg_color="transparent")
+            heading.pack(fill="x", padx=18, pady=(16, 12))
+            ctk.CTkLabel(
+                heading,
+                text=title,
+                font=app_font(family="Segoe UI", size=15, weight="bold"),
+                text_color=self.COLORS["text"],
+            ).pack(anchor="w", pady=(0, 4))
+            ctk.CTkLabel(
+                heading,
+                text=detail,
+                font=app_font(family="Segoe UI", size=10),
+                text_color=self.COLORS["muted"],
+            ).pack(anchor="w")
+            content = ctk.CTkFrame(card, fg_color="transparent")
+            content.pack(fill="x")
+            return content
+
+        def add_entry(
+            section: ctk.CTkFrame,
+            label: str,
+            key: str,
+            value: str,
+            row: int,
+            column: int,
+            *,
+            columnspan: int = 1,
+        ) -> None:
+            field = ctk.CTkFrame(section, fg_color="transparent")
+            field.grid(
+                row=row,
+                column=column,
+                columnspan=columnspan,
+                sticky="ew",
+                padx=18,
+                pady=(0, 12),
+            )
+            ctk.CTkLabel(
+                field,
                 text=label,
                 font=app_font(family="Segoe UI", size=10, weight="bold"),
                 text_color=self.COLORS["muted"],
-            ).pack(anchor="w", padx=18, pady=(9, 5))
+            ).pack(anchor="w", pady=(0, 5))
             entry = ctk.CTkEntry(
-                card,
+                field,
                 height=38,
                 corner_radius=9,
                 show="•" if key == "gemini_api_key" else None,
@@ -2366,13 +3257,112 @@ class EduTrackApp(ctk.CTk):
                 ),
             )
             entry.insert(0, value)
-            entry.pack(fill="x", padx=18)
+            entry.pack(fill="x")
             if key == "student_id":
                 entry.configure(state="disabled")
             self.settings_entries[key] = entry
 
+        self.settings_entries: dict[str, ctk.CTkEntry] = {}
+
+        profile = create_section(
+            "Profile Settings",
+            "Personalize your student profile.",
+        )
+        profile.grid_columnconfigure((0, 1), weight=1, uniform="profile")
+        add_entry(profile, "Display name", "name", self.student["name"], 2, 0)
+        add_entry(
+            profile,
+            "Student ID",
+            "student_id",
+            self.student["student_id"],
+            2,
+            1,
+        )
+        add_entry(
+            profile,
+            "Current semester",
+            "semester",
+            self.student["semester"],
+            3,
+            0,
+            columnspan=2,
+        )
+
+        academic = create_section(
+            "Academic Goals",
+            "Set your program requirements and academic target.",
+        )
+        academic.grid_columnconfigure((0, 1), weight=1, uniform="academic")
+        add_entry(
+            academic,
+            "Program credits",
+            "program_credits",
+            str(self.program_credits),
+            2,
+            0,
+        )
+        add_entry(
+            academic,
+            "Target CGPA",
+            "target_cgpa",
+            f"{self.target_cgpa:.2f}",
+            2,
+            1,
+        )
+        add_entry(
+            academic,
+            "Current CGPA",
+            "current_cgpa",
+            f"{self.current_cgpa:.2f}" if self.current_cgpa is not None else "",
+            3,
+            0,
+        )
+        theme_field = ctk.CTkFrame(academic, fg_color="transparent")
+        theme_field.grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=18,
+            pady=(0, 16),
+        )
         ctk.CTkLabel(
-            card,
+            theme_field,
+            text="Accent theme",
+            font=app_font(family="Segoe UI", size=10, weight="bold"),
+            text_color=self.COLORS["muted"],
+        ).pack(anchor="w", pady=(0, 5))
+        self.theme_selector = ctk.CTkOptionMenu(
+            theme_field,
+            values=list(ACCENT_THEMES),
+            command=self._change_accent_theme,
+            height=38,
+            corner_radius=9,
+            fg_color=self.COLORS["blue"],
+            button_color=self.COLORS["blue"],
+            button_hover_color=self.COLORS["blue_hover"],
+            dropdown_fg_color=self.COLORS["surface_alt"],
+            dropdown_hover_color=self.COLORS["blue"],
+            text_color=self.COLORS["text"],
+        )
+        self.theme_selector.set(self.accent_theme)
+        self.theme_selector.pack(anchor="w")
+
+        ai = create_section(
+            "AI Configuration",
+            "Configure optional cloud-powered academic advice.",
+        )
+        ai.grid_columnconfigure(0, weight=1)
+        add_entry(
+            ai,
+            "Gemini API key",
+            "gemini_api_key",
+            self.gemini_api_key,
+            2,
+            0,
+        )
+        ctk.CTkLabel(
+            ai,
             text=(
                 "Gemini API key (optional): saved locally in SQLite and used for "
                 "cloud AI advice. Leave blank to use the local advisor."
@@ -2381,45 +3371,141 @@ class EduTrackApp(ctk.CTk):
             text_color=self.COLORS["amber"],
             wraplength=760,
             justify="left",
-        ).pack(anchor="w", padx=18, pady=(9, 0))
+        ).grid(row=3, column=0, sticky="w", padx=18, pady=(0, 16))
 
+        management = create_section(
+            "Data Management",
+            "Export a backup or restore your data from a previous backup.",
+        )
         self.settings_status = ctk.CTkLabel(
-            card,
+            management,
             text="",
             font=app_font(family="Segoe UI", size=10),
             text_color=self.COLORS["green"],
         )
-        self.settings_status.pack(anchor="w", padx=18, pady=(10, 0))
+        self.settings_status.pack(anchor="w", padx=18, pady=(0, 8))
+        settings_actions = ctk.CTkFrame(management, fg_color="transparent")
+        settings_actions.pack(fill="x", padx=18, pady=(0, 18))
         save_button = ctk.CTkButton(
-            card,
+            settings_actions,
             text="Save settings",
             height=40,
             corner_radius=9,
             command=self._save_settings,
         )
-        self._enable_button_transition(save_button, self.COLORS["blue"], "#2563EB")
-        save_button.pack(anchor="w", padx=18, pady=(12, 18))
+        self._enable_button_transition(
+            save_button, self.COLORS["blue"], self.COLORS["blue_hover"]
+        )
+        save_button.pack(side="left", padx=(0, 10))
 
-        integration = self._card(parent)
-        integration.pack(fill="x", pady=(14, 0))
-        ctk.CTkLabel(
-            integration,
-            text="BACKEND CONNECTIONS",
-            font=app_font(family="Segoe UI", size=9, weight="bold"),
-            text_color=self.COLORS["cyan"],
-        ).pack(anchor="w", padx=18, pady=(16, 7))
-        ctk.CTkLabel(
-            integration,
-            text=(
-                "Academic records: modules.crud.AcademicCRUD\n"
-                "GPA projections: modules.predictor.TrajectoryEngine\n"
-                "AI guidance: modules.ai_advisor.AIAdvisorEngine\n"
-                "Use the Gemini API key above or set GEMINI_API_KEY in the environment."
-            ),
-            font=app_font(family="Segoe UI", size=10),
-            text_color=self.COLORS["muted"],
-            justify="left",
-        ).pack(anchor="w", padx=18, pady=(0, 16))
+        export_button = ctk.CTkButton(
+            settings_actions,
+            text="Export Data",
+            height=40,
+            corner_radius=9,
+            command=self._export_data,
+            fg_color=self.COLORS["surface_alt"],
+            hover_color=self.COLORS["border"],
+        )
+        self._enable_button_transition(
+            export_button, self.COLORS["surface_alt"], self.COLORS["border"]
+        )
+        export_button.pack(side="left", padx=(0, 10))
+        restore_button = ctk.CTkButton(
+            settings_actions,
+            text="Restore Data",
+            height=40,
+            corner_radius=9,
+            command=self._restore_data,
+            fg_color=self.COLORS["surface_alt"],
+            hover_color=self.COLORS["border"],
+        )
+        self._enable_button_transition(
+            restore_button, self.COLORS["surface_alt"], self.COLORS["border"]
+        )
+        restore_button.pack(side="left")
+
+    def _change_accent_theme(self, theme_name: str) -> None:
+        """Save a selected accent theme and rebuild widgets with its palette."""
+        try:
+            theme_colors = accent_theme_colors(theme_name)
+        except ValueError as exc:
+            self.theme_selector.set(self.accent_theme)
+            self.settings_status.configure(
+                text=f"Could not apply accent theme: {exc}",
+                text_color=self.COLORS["red"],
+            )
+            return
+
+        if theme_name == self.accent_theme:
+            return
+
+        try:
+            from modules.crud import AcademicCRUD
+
+            AcademicCRUD.save_user_theme(self.student["student_id"], theme_name)
+        except Exception as exc:
+            self.theme_selector.set(self.accent_theme)
+            self.settings_status.configure(
+                text=f"Could not save accent theme: {exc}",
+                text_color=self.COLORS["red"],
+            )
+            return
+
+        current_page = self.current_page or "Settings"
+        settings_draft = {
+            key: entry.get() for key, entry in self.settings_entries.items()
+        }
+        self.accent_theme = theme_name
+        self.COLORS.update(theme_colors)
+        self._refresh_theme_ui(current_page, settings_draft)
+
+    def _refresh_theme_ui(
+        self, page: str, settings_draft: dict[str, str] | None = None
+    ) -> None:
+        """Recreate widgets so cached CustomTkinter colors use the active palette."""
+        for button, job in tuple(self._button_color_jobs.items()):
+            try:
+                button.after_cancel(job)
+            except tk.TclError:
+                pass
+        self._button_color_jobs.clear()
+        self._button_hover_states.clear()
+        if self._status_reset_job is not None:
+            try:
+                self.after_cancel(self._status_reset_job)
+            except tk.TclError:
+                pass
+            self._status_reset_job = None
+        if self.help_window is not None and self.help_window.winfo_exists():
+            self.help_window.destroy()
+            self.help_window = None
+
+        self._discard_cached_pages()
+        self.sidebar.destroy()
+        self.main.destroy()
+        self.configure(fg_color=self.COLORS["window"])
+        self._build_shell()
+        self.show_page(page)
+        for key, value in (settings_draft or {}).items():
+            entry = self.settings_entries[key]
+            if key == "student_id":
+                entry.configure(state="normal")
+            entry.delete(0, "end")
+            entry.insert(0, value)
+            if key == "student_id":
+                entry.configure(state="disabled")
+        if page == "Settings":
+            self.settings_status.configure(
+                text=f"{self.accent_theme} theme applied and saved.",
+                text_color=self.COLORS["green"],
+            )
+        else:
+            self._show_header_status(
+                "ACCENT THEME RESTORED",
+                self.COLORS["green"],
+                reset_after=3500,
+            )
 
     def _save_settings(self) -> None:
         name = self.settings_entries["name"].get().strip()
@@ -2429,6 +3515,8 @@ class EduTrackApp(ctk.CTk):
         try:
             program_credits = float(self.settings_entries["program_credits"].get())
             target_cgpa = float(self.settings_entries["target_cgpa"].get())
+            current_cgpa_text = self.settings_entries["current_cgpa"].get().strip()
+            current_cgpa = float(current_cgpa_text) if current_cgpa_text else None
             if (
                 not name
                 or not student_id
@@ -2437,11 +3525,21 @@ class EduTrackApp(ctk.CTk):
                 or program_credits <= 0
                 or not math.isfinite(target_cgpa)
                 or not 0 <= target_cgpa <= self.GRADE_SCALE
+                or (
+                    current_cgpa is not None
+                    and (
+                        not math.isfinite(current_cgpa)
+                        or not 0 <= current_cgpa <= self.GRADE_SCALE
+                    )
+                )
             ):
                 raise ValueError
         except ValueError:
             self.settings_status.configure(
-                text="Enter a name, ID, semester, positive credit total, and target GPA from 0 to 4.",
+                text=(
+                    "Enter a name, ID, semester, positive credit total, and GPAs "
+                    "from 0 to 4. Current CGPA may be blank."
+                ),
                 text_color=self.COLORS["red"],
             )
             return
@@ -2461,7 +3559,9 @@ class EduTrackApp(ctk.CTk):
                 semester,
                 program_credits,
                 target_cgpa,
+                current_cgpa,
                 gemini_api_key,
+                self.accent_theme,
             )
         except Exception as exc:
             self.settings_status.configure(
@@ -2473,6 +3573,12 @@ class EduTrackApp(ctk.CTk):
         self.student.update(name=name, semester=semester)
         self.program_credits = program_credits
         self.target_cgpa = target_cgpa
+        if current_cgpa is None:
+            from modules.grading import calculate_weighted_cgpa
+
+            self.current_cgpa, _ = calculate_weighted_cgpa(self.enrollments)
+        else:
+            self.current_cgpa = current_cgpa
         self.gemini_api_key = gemini_api_key
         self._update_profile_badge()
         self._discard_cached_pages()
@@ -2481,6 +3587,73 @@ class EduTrackApp(ctk.CTk):
             "✓  SETTINGS SAVED",
             self.COLORS["green"],
             reset_after=3500,
+        )
+
+    def _export_data(self) -> None:
+        from modules.crud import AcademicCRUD
+
+        try:
+            backup_path = AcademicCRUD.export_data()
+            if backup_path is None:
+                return
+        except Exception as exc:
+            messagebox.showerror(
+                "Export failed",
+                f"Could not export EduTrack data:\n{exc}",
+                parent=self,
+            )
+            return
+        messagebox.showinfo(
+            "Export successful",
+            f"EduTrack data was exported to:\n{backup_path}\n\n"
+            "Keep this file private: it includes saved settings such as the "
+            "Gemini API key. Login passwords are not included.",
+            parent=self,
+        )
+
+    def _restore_data(self) -> None:
+        overwrite = messagebox.askyesnocancel(
+            "Restore EduTrack data",
+            "Choose how to apply the backup.\n\n"
+            "Yes: Merge the backup, updating matching records and preserving "
+            "existing records not included in it.\n\n"
+            "No: Overwrite matching profiles and replace their enrollments and "
+            "settings with the backup. Unrelated profiles and login credentials "
+            "will be preserved.",
+            parent=self,
+        )
+        if overwrite is None:
+            return
+
+        from modules.crud import AcademicCRUD
+
+        mode = "merge" if overwrite else "overwrite"
+        try:
+            restored = AcademicCRUD.restore_data(mode=mode)
+            if restored is None:
+                return
+        except Exception as exc:
+            messagebox.showerror(
+                "Restore failed",
+                f"Could not restore EduTrack data:\n{exc}",
+                parent=self,
+            )
+            return
+
+        previous_theme = self.accent_theme
+        self._load_student_data()
+        if self.accent_theme != previous_theme:
+            self._refresh_theme_ui("Dashboard")
+        else:
+            self._update_profile_badge()
+            self._discard_cached_pages()
+            self.show_page("Dashboard")
+        messagebox.showinfo(
+            "Restore successful",
+            "Restored "
+            f"{restored['students']} profiles, {restored['enrollments']} "
+            f"enrollments, and {restored['user_settings']} settings.",
+            parent=self,
         )
 
 
