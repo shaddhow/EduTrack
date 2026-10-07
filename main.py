@@ -10,6 +10,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 import tkinter as tk
 from collections import Counter, defaultdict
 from tkinter import messagebox, ttk
@@ -2606,28 +2607,53 @@ class EduTrackApp(ctk.CTk):
             justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 16))
 
+        self.advisor_history: list[dict[str, str]] = getattr(
+            self, "advisor_history", []
+        )
         card = self._card(parent)
         card.pack(fill="both", expand=True)
         ctk.CTkLabel(
             card,
-            text="What would you like help with?",
+            text="Academic Trainer",
             font=app_font(family="Segoe UI", size=14, weight="bold"),
             text_color=self.COLORS["text"],
-        ).pack(anchor="w", padx=18, pady=(18, 10))
+        ).pack(anchor="w", padx=18, pady=(16, 3))
         ctk.CTkLabel(
             card,
             text=(
-                "Type a question or edit the example below, then select "
-                "Get academic guidance. Your grades help personalize the answer."
+                "Ask about study plans, exams, or performance. Your course, "
+                "grade, attendance, and schedule records personalize the coaching."
             ),
             font=app_font(family="Segoe UI", size=10),
             text_color=self.COLORS["muted"],
-            wraplength=800,
+            wraplength=850,
             justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 10))
+
+        self.advisor_chat = ctk.CTkScrollableFrame(
+            card,
+            height=390,
+            corner_radius=10,
+            fg_color=self.COLORS["window"],
+            scrollbar_button_color=self.COLORS["border"],
+        )
+        self.advisor_chat.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        if self.advisor_history:
+            for message in self.advisor_history:
+                self._append_advisor_message(
+                    message["role"], message["text"], scroll=False
+                )
+        else:
+            self._append_advisor_message(
+                "assistant",
+                "I’m ready to help you train for stronger academic results. "
+                "Tell me what you’re working toward.",
+                scroll=False,
+            )
+
         self.advisor_input = ctk.CTkTextbox(
             card,
-            height=100,
+            height=82,
             corner_radius=10,
             border_width=1,
             border_color=self.COLORS["border"],
@@ -2635,11 +2661,11 @@ class EduTrackApp(ctk.CTk):
             wrap="word",
         )
         self.advisor_input.pack(fill="x", padx=18)
-        self.advisor_input.insert(
-            "1.0", "How can I improve my CGPA next semester?"
+        self.advisor_input.bind(
+            "<Control-Return>", lambda _event: self._request_advice()
         )
         actions = ctk.CTkFrame(card, fg_color="transparent")
-        actions.pack(fill="x", padx=18, pady=12)
+        actions.pack(fill="x", padx=18, pady=(10, 15))
         self.advisor_button = ctk.CTkButton(
             actions,
             text="Get academic guidance",
@@ -2653,31 +2679,53 @@ class EduTrackApp(ctk.CTk):
         self.advisor_button.pack(side="left")
         self.advisor_status = ctk.CTkLabel(
             actions,
-            text="Uses your saved Gemini key, if configured; otherwise uses local guidance.",
+            text="Gemini coaching when configured; personalized local coaching otherwise.",
             font=app_font(family="Segoe UI", size=9),
             text_color=self.COLORS["muted"],
-            wraplength=500,
+            wraplength=600,
         )
         self.advisor_status.pack(side="left", padx=12)
+
+    def _append_advisor_message(
+        self, role: str, text: str, *, scroll: bool = True
+    ) -> ctk.CTkLabel:
+        is_user = role == "user"
+        row = ctk.CTkFrame(self.advisor_chat, fg_color="transparent")
+        row.pack(fill="x", padx=8, pady=5)
+        bubble = ctk.CTkFrame(
+            row,
+            corner_radius=12,
+            fg_color=(
+                self.COLORS["blue"] if is_user else self.COLORS["surface_alt"]
+            ),
+        )
+        bubble.pack(
+            side="right" if is_user else "left",
+            padx=(70, 4) if is_user else (4, 70),
+        )
         ctk.CTkLabel(
-            card,
-            text="ADVISOR RESPONSE",
-            font=app_font(family="Segoe UI", size=9, weight="bold"),
-            text_color=self.COLORS["cyan"],
-        ).pack(anchor="w", padx=18, pady=(5, 8))
-        self.advisor_output = ctk.CTkTextbox(
-            card,
-            height=180,
-            corner_radius=10,
+            bubble,
+            text="YOU" if is_user else "ACADEMIC TRAINER",
+            font=app_font(family="Segoe UI", size=8, weight="bold"),
+            text_color="#DBEAFE" if is_user else self.COLORS["cyan"],
+        ).pack(anchor="w", padx=12, pady=(9, 2))
+        message = ctk.CTkLabel(
+            bubble,
+            text=text,
             font=app_font(family="Segoe UI", size=11),
-            wrap="word",
+            text_color=self.COLORS["text"],
+            wraplength=660,
+            justify="left",
+            anchor="w",
         )
-        self.advisor_output.pack(fill="both", expand=True, padx=18, pady=(0, 18))
-        self.advisor_output.insert(
-            "1.0",
-            "Your academic profile is ready. Ask a question to receive guidance.",
-        )
-        self.advisor_output.configure(state="disabled")
+        message.pack(anchor="w", padx=12, pady=(0, 10))
+        if scroll:
+            self._scroll_advisor_chat()
+        return message
+
+    def _scroll_advisor_chat(self) -> None:
+        self.advisor_chat.update_idletasks()
+        self.advisor_chat._parent_canvas.yview_moveto(1.0)
 
     def _request_advice(self) -> None:
         question = self.advisor_input.get("1.0", "end").strip()
@@ -2688,57 +2736,114 @@ class EduTrackApp(ctk.CTk):
             )
             return
         summary = self._summary()
-        if summary["cgpa"] is None:
-            self.advisor_status.configure(
-                text="No graded records are available to personalize guidance.",
-                text_color=self.COLORS["amber"],
-            )
-            return
-
+        history = list(self.advisor_history)
+        self.advisor_history.append({"role": "user", "text": question})
+        self._append_advisor_message("user", question, scroll=False)
+        loading_message = self._append_advisor_message(
+            "assistant", "Reviewing your academic record...", scroll=True
+        )
+        self.advisor_input.delete("1.0", "end")
         self.advisor_button.configure(state="disabled", text="Thinking...")
         self.advisor_status.configure(
-            text="Preparing academic guidance...",
+            text="Loading your academic profile and preparing coaching...",
             text_color=self.COLORS["muted"],
-        )
-        context = (
-            self.student["name"],
-            summary["cgpa"],
-            summary["completed_credits"],
-            [
-                str(record.get("course_code", "Course"))
-                for record in summary["weak_courses"]
-            ],
-            question,
         )
 
         def generate() -> None:
+            from modules.ai_advisor import (
+                AIAdvisorEngine,
+                build_student_academic_profile,
+            )
+
+            error: str | None = None
             try:
-                from modules.ai_advisor import AIAdvisorEngine
+                from modules.crud import AcademicCRUD
 
-                advisor = AIAdvisorEngine(
-                    api_key=self.gemini_api_key or os.environ.get("GEMINI_API_KEY")
+                settings = AcademicCRUD.get_user_settings(self.student["student_id"])
+                profile = build_student_academic_profile(
+                    self.student["student_id"],
+                    settings["display_name"],
+                    float(settings["target_cgpa"]),
+                    float(settings["program_credits"]),
                 )
-                response = advisor.get_academic_advice(*context)
-                error = None
+                api_key = (
+                    settings["gemini_api_key"]
+                    or self.gemini_api_key
+                    or os.environ.get("GEMINI_API_KEY", "")
+                )
             except Exception as exc:
-                response = f"Advisor could not be reached: {exc}"
-                error = str(exc)
-            self.after(0, lambda: self._finish_advice(response, error))
+                error = f"Could not refresh SQLite context ({type(exc).__name__})."
+                profile = {
+                    "student_name": self.student["name"],
+                    "student_id": self.student["student_id"],
+                    "current_cgpa": summary["cgpa"],
+                    "graded_credits": summary["completed_credits"],
+                    "target_cgpa": self.target_cgpa,
+                    "program_credits": self.program_credits,
+                    "courses": self.enrollments,
+                    "weak_courses": summary["weak_courses"],
+                    "attendance": [],
+                    "schedules": [],
+                }
+                api_key = self.gemini_api_key or os.environ.get("GEMINI_API_KEY", "")
+            try:
+                advisor = AIAdvisorEngine(api_key=api_key)
+                weak_courses = profile.get("weak_courses", [])
+                response = advisor.get_academic_advice(
+                    str(profile.get("student_name") or self.student["name"]),
+                    profile.get("current_cgpa"),
+                    float(profile.get("graded_credits") or 0),
+                    weak_courses,
+                    question,
+                    academic_profile=profile,
+                    conversation=history,
+                )
+                if advisor.cloud_error:
+                    error = advisor.cloud_error
+            except Exception as exc:
+                response = (
+                    "The academic coach could not prepare a response. "
+                    "Please try again."
+                )
+                error = f"Advisor error ({type(exc).__name__})."
+            self.after(
+                0,
+                lambda: self._finish_advice(response, error, loading_message),
+            )
 
-        threading.Thread(target=generate, name="edutrack-ai-advisor", daemon=True).start()
+        threading.Thread(
+            target=generate, name="edutrack-ai-advisor", daemon=True
+        ).start()
 
-    def _finish_advice(self, response: str, error: str | None) -> None:
+    def _finish_advice(
+        self,
+        response: str,
+        error: str | None,
+        loading_message: ctk.CTkLabel,
+    ) -> None:
         if not self.winfo_exists():
             return
-        self.advisor_output.configure(state="normal")
-        self.advisor_output.delete("1.0", "end")
-        self.advisor_output.insert("1.0", response or "The advisor returned an empty response.")
-        self.advisor_output.configure(state="disabled")
-        self.advisor_button.configure(state="normal", text="Get academic guidance")
-        self.advisor_status.configure(
-            text="Advisor service unavailable." if error else "Guidance is ready.",
-            text_color=self.COLORS["red"] if error else self.COLORS["green"],
+        if not loading_message.winfo_exists():
+            return
+        loading_message.configure(
+            text=response or "The advisor returned an empty response."
         )
+        self.advisor_history.append(
+            {
+                "role": "assistant",
+                "text": response or "The advisor returned an empty response.",
+            }
+        )
+        if self.advisor_button.winfo_exists():
+            self.advisor_button.configure(
+                state="normal", text="Get academic guidance"
+            )
+        if self.advisor_status.winfo_exists():
+            self.advisor_status.configure(
+                text=error or "Guidance is ready.",
+                text_color=self.COLORS["amber"] if error else self.COLORS["green"],
+            )
+        self._scroll_advisor_chat()
 
     def _build_analytics(self, parent: ctk.CTkFrame) -> None:
         summary = self._summary()
