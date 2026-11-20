@@ -26,7 +26,8 @@ class EmbeddedOfflineLLM:
         self.bin_dir = self.root_dir / "bin"
         self.models_dir = self.root_dir / "models"
         self.cli_exe = self.bin_dir / "llama-cli.exe"
-        self.default_model = self.models_dir / "llama-3.2-1b-instruct-q4_k_m.gguf"
+        self.qwen_model = self.models_dir / "qwen2.5-3b-instruct-q4_k_m.gguf"
+        self.llama_model = self.models_dir / "llama-3.2-1b-instruct-q4_k_m.gguf"
 
     @classmethod
     def get_instance(cls) -> EmbeddedOfflineLLM:
@@ -42,9 +43,12 @@ class EmbeddedOfflineLLM:
         return model is not None and model.exists() and os.path.getsize(model) > 50 * 1024 * 1024
 
     def get_model_path(self) -> Path | None:
-        if self.default_model.exists() and os.path.getsize(self.default_model) > 50 * 1024 * 1024:
-            return self.default_model
-        ggufs = list(self.models_dir.glob("*.gguf"))
+        """Prefers high-IQ multilingual Qwen 2.5 3B; gracefully falls back to Llama 3.2 1B."""
+        if self.qwen_model.exists() and os.path.getsize(self.qwen_model) > 500 * 1024 * 1024:
+            return self.qwen_model
+        if self.llama_model.exists() and os.path.getsize(self.llama_model) > 500 * 1024 * 1024:
+            return self.llama_model
+        ggufs = sorted(list(self.models_dir.glob("*.gguf")), key=lambda p: os.path.getsize(p), reverse=True)
         if ggufs and os.path.getsize(ggufs[0]) > 50 * 1024 * 1024:
             return ggufs[0]
         return None
@@ -68,10 +72,19 @@ class EmbeddedOfflineLLM:
             "-p", prompt,
             "-n", str(max_tokens),
             "--temp", str(temperature),
+            "--repeat-penalty", "1.25",
+            "--repeat-last-n", "128",
             "-t", str(threads),
             "-st",
             "--no-display-prompt",
         ]
+
+        # Model-specific chat templates
+        m_name = model_path.name.lower()
+        if "qwen" in m_name:
+            cmd.extend(["--chat-template", "chatml"])
+        elif "llama" in m_name:
+            cmd.extend(["--chat-template", "llama3"])
 
         if system_instruction:
             cmd.extend(["-sys", system_instruction])
@@ -126,7 +139,18 @@ class EmbeddedOfflineLLM:
             for token in ("<|eot_id|>", "<|end_of_text|>", "<|start_header_id|>", "<|begin_of_text|>"):
                 parsed = parsed.replace(token, "")
 
-            return parsed.strip() if len(parsed.strip()) > 5 else None
+            clean_text = parsed.strip()
+            if len(clean_text) <= 5:
+                return None
+
+            # Filter out degenerative token repetition loops (e.g. repeated numbers or identical phrases)
+            raw_lines = [line.strip() for line in clean_text.splitlines() if line.strip()]
+            if len(raw_lines) >= 4:
+                unique_lines = set(raw_lines)
+                if len(unique_lines) / len(raw_lines) < 0.55:
+                    return None
+
+            return clean_text
 
         except Exception:
             return None

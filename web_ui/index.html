@@ -331,18 +331,23 @@ body.dark-mode .btn-dm:hover{
   display:flex;flex-direction:column;position:relative;overflow:hidden;
   box-shadow:2px 0 12px rgba(15,23,42,.02);z-index:20;
 }
-.sidebar::before{content:'';position:absolute;top:-100px;left:-100px;width:400px;height:400px;border-radius:50%;background:rgba(14,165,233,.02);pointer-events:none;}
-.sidebar::after{content:'';position:absolute;bottom:-80px;right:-80px;width:300px;height:300px;border-radius:50%;background:rgba(14,165,233,.02);pointer-events:none;}
-.sb-brand{padding:1.4rem 1.3rem 1.2rem;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:11px;position:relative;}
-.sb-ico{width:38px;height:38px;border-radius:10px;background:rgba(14,165,233,.1);border:1px solid rgba(14,165,233,.22);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;color:#0284c7;}
-.sb-nm{font-size:16px;font-weight:800;color:#0f172a;letter-spacing:-.2px;}
-.sb-st{font-size:10px;color:#64748b;letter-spacing:1.5px;}
-.sb-sec{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:2px;padding:1rem 1.3rem .4rem;font-weight:700;}
-.nav-i{display:flex;align-items:center;gap:11px;padding:10px 1.3rem;cursor:pointer;color:#475569;font-size:13.5px;font-weight:500;transition:var(--t);border-left:3px solid transparent;position:relative;}
-.nav-i:hover{background:#f8fafc;color:#0f172a;}
-.nav-i.active{background:rgba(14,165,233,.08);color:#0284c7;border-left-color:#0284c7;font-weight:700;}
-.nav-n{font-size:11px;color:#94a3b8;min-width:20px;font-weight:600;}
-.sb-bot{margin-top:auto;padding:1rem 1.3rem;border-top:1px solid #f1f5f9;position:relative;}
+.sidebar::before, .sidebar::after { display: none; }
+.sb-brand{padding:1.25rem 1.2rem 1.1rem;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:11px;position:relative;}
+.sb-ico{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg, rgba(14,165,233,.15), rgba(2,132,199,.25));border:1px solid rgba(14,165,233,.3);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:900;color:#0284c7;}
+.sb-nm{font-size:15.5px;font-weight:800;color:#0f172a;letter-spacing:-.3px;}
+.sb-st{font-size:9.5px;color:#64748b;letter-spacing:1.2px;font-weight:600;}
+.sb-sec{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1.5px;padding:1rem 1.2rem .45rem;font-weight:700;}
+.nav-i{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;margin:2px 10px;
+  border-radius:9px;cursor:pointer;color:#475569;font-size:13px;font-weight:500;
+  transition:all .18s cubic-bezier(0.16, 1, 0.3, 1);position:relative;
+}
+.nav-i:hover{background:#f1f5f9;color:#0f172a;}
+.nav-i.active{background:rgba(14,165,233,.12);color:#0284c7;font-weight:600;}
+.nav-ico{width:16px;height:16px;flex-shrink:0;opacity:0.75;transition:all .18s ease;}
+.nav-i:hover .nav-ico{opacity:1;}
+.nav-i.active .nav-ico{opacity:1;color:#0284c7;}
+.sb-bot{margin-top:auto;padding:1rem 1.1rem;border-top:1px solid #f1f5f9;position:relative;}
 .u-pill{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;margin-bottom:9px;}
 .u-av{width:36px;height:36px;border-radius:10px;background:rgba(14,165,233,.12);border:1px solid rgba(14,165,233,.25);display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;color:#0284c7;flex-shrink:0;}
 .u-nm{font-size:13px;font-weight:700;color:#0f172a;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -400,12 +405,12 @@ body.dark-mode .nav-i:hover {
   color: #f8fafc;
 }
 body.dark-mode .nav-i.active {
-  background: rgba(56, 189, 248, 0.08);
+  background: rgba(56, 189, 248, 0.12);
   color: #38bdf8;
-  border-left-color: #38bdf8;
 }
-body.dark-mode .nav-n {
-  color: #475569;
+body.dark-mode .nav-i.active .nav-ico {
+  color: #38bdf8;
+  opacity: 1;
 }
 body.dark-mode .sb-bot {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
@@ -530,56 +535,45 @@ body.dark-mode .zoom-val{color:#e0f2fe;}
    DASHBOARD — UNIQUE RADIANT GLASS PANELS
 ═══════════════════════════════════════ */
 .w-hero{
-  border-radius:20px;overflow:hidden;margin-bottom:1.6rem;
-  box-shadow:0 12px 32px -4px rgba(15,23,42,.08), 0 4px 12px -2px rgba(15,23,42,.04);
+  border-radius:18px;overflow:hidden;margin-bottom:1.6rem;
+  box-shadow:0 10px 30px -6px rgba(15,23,42,.12), 0 4px 10px -2px rgba(15,23,42,.06);
   position:relative;
-  background:linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f2847 100%);
-  border:1px solid rgba(15,23,42,0.08);
+  background:linear-gradient(135deg, #090e17 0%, #0f172a 45%, #1e293b 100%);
+  border:1px solid rgba(255,255,255,0.1);
 }
 body.dark-mode .w-hero{
-  background:linear-gradient(135deg, #090e17 0%, #111a2e 50%, #0d1527 100%);
+  background:linear-gradient(135deg, #060a12 0%, #0c1322 50%, #111a2e 100%);
   border:1px solid rgba(255,255,255,0.08);
   box-shadow:0 16px 40px -10px rgba(0,0,0,0.7);
 }
 .w-hero::after {
   content:'';position:absolute;inset:0;
-  background:linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.07) 50%, transparent 80%);
+  background:linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.05) 50%, transparent 80%);
   background-size:200% 100%;
   animation:heroShimmer 6s infinite ease-in-out;
   pointer-events:none;
 }
 .w-hero-deco{position:absolute;inset:0;pointer-events:none;overflow:hidden;}
-.w-deco-rings{
-  position:absolute;right:-60px;top:-60px;width:320px;height:320px;border-radius:50%;
-  border:1.5px solid rgba(255,255,255,.12);
-  animation:sp-rot 65s linear infinite;
-  transform-origin:160px 160px;
-}
-.w-deco-rings2{
-  position:absolute;right:40px;top:40px;width:220px;height:220px;border-radius:50%;
-  border:1.5px solid rgba(255,255,255,.08);
-  animation:sp-rot 42s linear reverse infinite;
-  transform-origin:110px 110px;
-}
-.w-deco-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:28px 28px;}
-.w-hero-body{position:relative;padding:1.8rem 2.2rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;}
-.w-av{width:52px;height:52px;border-radius:14px;background:rgba(255,255,255,.18);backdrop-filter:blur(8px);border:2px solid rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:#fff;flex-shrink:0;transition:var(--t);}
-.w-av:hover{transform:scale(1.06) rotate(3deg);}
+.w-deco-rings, .w-deco-rings2{display:none;}
+.w-deco-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:28px 28px;}
+.w-hero-body{position:relative;padding:1.6rem 2rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;}
+.w-av{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg, #0284c7, #2563eb);border:1px solid rgba(255,255,255,.3);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;flex-shrink:0;transition:var(--t);}
+.w-av:hover{transform:scale(1.04);}
 .w-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
-.wtg{font-size:11px;padding:3px 10px;border-radius:12px;background:rgba(255,255,255,.18);color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
+.wtg{font-size:10.5px;padding:3px 9px;border-radius:6px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#e2e8f0;font-weight:600;text-transform:uppercase;letter-spacing:.4px;}
 body.dark-mode .wtg{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#cbd5e1;}
-.w-nm{font-size:1.35rem;font-weight:800;color:#fff;}
-.w-mt{font-size:13px;color:rgba(255,255,255,.75);margin-top:2px;}
+.w-nm{font-size:1.3rem;font-weight:800;color:#fff;}
+.w-mt{font-size:12.5px;color:rgba(255,255,255,.72);margin-top:2px;}
 .w-btns{display:flex;gap:9px;flex-shrink:0;}
-.wbtn{padding:10px 18px;border-radius:11px;border:1.5px solid rgba(255,255,255,.3);background:rgba(255,255,255,.14);backdrop-filter:blur(6px);color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:var(--t);}
+.wbtn{padding:9px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);backdrop-filter:blur(6px);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;transition:var(--t);}
 body.dark-mode .wbtn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#f1f5f9;}
-.wbtn:hover{background:rgba(255,255,255,.24);transform:translateY(-1px);}
+.wbtn:hover{background:rgba(255,255,255,.2);transform:translateY(-1px);}
 body.dark-mode .wbtn:hover{background:rgba(255,255,255,.12);border-color:rgba(56,189,248,.4);}
-.wbtn.s{background:rgba(255,255,255,.92);color:var(--deepest);border-color:transparent;}
+.wbtn.s{background:#38bdf8;color:#080c14;border-color:transparent;font-weight:700;}
 body.dark-mode .wbtn.s{background:#38bdf8;color:#080c14;font-weight:800;border-color:transparent;}
-.wbtn.s:hover{background:#fff;transform:translateY(-1px);}
+.wbtn.s:hover{background:#7dd3fc;transform:translateY(-1px);}
 body.dark-mode .wbtn.s:hover{background:#7dd3fc;box-shadow:0 0 16px rgba(56,189,248,.4);}
-.w-strip{background:rgba(0,0,0,.16);backdrop-filter:blur(6px);padding:.9rem 2.2rem;display:flex;align-items:center;gap:2.5rem;flex-wrap:wrap;}
+.w-strip{background:rgba(0,0,0,.25);backdrop-filter:blur(8px);padding:.8rem 2rem;display:flex;align-items:center;gap:2.2rem;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,0.06);}
 body.dark-mode .w-strip{background:rgba(0,0,0,.35);border-top:1px solid rgba(255,255,255,0.05);}
 .wsi{display:flex;align-items:center;gap:10px;}
 .wsi-l{font-size:11px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.8px;font-weight:600;}
@@ -590,70 +584,50 @@ body.dark-mode .w-strip{background:rgba(0,0,0,.35);border-top:1px solid rgba(255
 /* Ring widgets row */
 .ring-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:1.6rem;}
 .ring-card{
-  border-radius:18px;padding:1.4rem 1.6rem;
+  border-radius:16px;padding:1.35rem 1.5rem;
   display:flex;align-items:center;gap:1.5rem;
   position:relative;overflow:hidden;
   background:var(--bg-card);
-  backdrop-filter:blur(24px) saturate(160%);
-  -webkit-backdrop-filter:blur(24px) saturate(160%);
   border:var(--border-card);
   box-shadow:var(--shadow-card);
-  transition:all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.ring-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-hover);border-color:rgba(14,165,233,.45);}
-.ring-card::after{content:'';position:absolute;right:-30px;top:-30px;width:120px;height:120px;border-radius:50%;background:linear-gradient(135deg,rgba(14,165,233,.06),transparent);}
+.ring-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover);border-color:rgba(14,165,233,.35);}
+.ring-card::after{display:none;}
 .rw{position:relative;width:96px;height:96px;flex-shrink:0;}
 .rw canvas{position:absolute;inset:0;}
 .rw-ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
 .rw-v{font-size:1.35rem;font-weight:900;color:var(--deep);transition:all .3s;}
 body.dark-mode .rw-v{color:var(--sky2);}
 .rw-l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:700;}
-.ring-info .ri-t{font-size:16px;font-weight:800;color:var(--ink);margin-bottom:4px;}
-.ring-info .ri-s{font-size:13px;color:var(--mid);margin-bottom:12px;}
+.ring-info .ri-t{font-size:15.5px;font-weight:800;color:var(--ink);margin-bottom:4px;}
+.ring-info .ri-s{font-size:12.5px;color:var(--mid);margin-bottom:10px;}
 .ri-tags{display:flex;gap:6px;flex-wrap:wrap;}
-.ritag{font-size:11.5px;padding:4px 10px;border-radius:20px;font-weight:700;}
-.ritag.b{background:rgba(14,165,233,.12);border:1px solid rgba(14,165,233,.24);color:var(--deep);}
+.ritag{font-size:11px;padding:3px 9px;border-radius:6px;font-weight:600;}
+.ritag.b{background:rgba(14,165,233,.1);border:1px solid rgba(14,165,233,.2);color:var(--deep);}
 body.dark-mode .ritag.b{color:var(--sky2);}
-.ritag.g{background:rgba(5,150,105,.1);border:1px solid rgba(5,150,105,.22);color:var(--ok);}
-.ritag.a{background:rgba(217,119,6,.1);border:1px solid rgba(217,119,6,.22);color:var(--warn);}
+.ritag.g{background:rgba(5,150,105,.08);border:1px solid rgba(5,150,105,.2);color:var(--ok);}
+.ritag.a{background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.2);color:var(--warn);}
 
 /* 4 Stat Cards */
 .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:1.6rem;}
 .gsc{
-  border-radius:18px;padding:1.4rem;position:relative;overflow:hidden;
-  transition:all 0.28s cubic-bezier(0.16, 1, 0.3, 1);cursor:default;
+  border-radius:16px;padding:1.3rem 1.4rem;position:relative;overflow:hidden;
+  transition:all 0.22s cubic-bezier(0.16, 1, 0.3, 1);cursor:default;
   background:var(--bg-card);
-  backdrop-filter:blur(20px) saturate(160%);
-  -webkit-backdrop-filter:blur(20px) saturate(160%);
   border:var(--border-card);
   box-shadow:var(--shadow-card);
 }
-.gsc::before{content:'';position:absolute;top:0;left:0;right:0;height:2.5px;border-radius:18px 18px 0 0;}
-.gsc:nth-child(1)::before{background:linear-gradient(90deg,var(--sky),var(--sky3));}
-.gsc:nth-child(2)::before{background:linear-gradient(90deg,var(--deep),var(--sky));}
-.gsc:nth-child(3)::before{background:linear-gradient(90deg,var(--deepest),var(--deep));}
-.gsc:nth-child(4)::before{background:linear-gradient(90deg,var(--ok),#34d399);}
-.gsc:hover{transform:translateY(-5px) scale(1.01);box-shadow:var(--shadow-hover);border-color:rgba(14,165,233,.45);}
+.gsc::before{display:none !important;}
+.gsc:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover);border-color:rgba(14,165,233,.35);}
 .gsc-ico{
-  width:42px;height:42px;border-radius:12px;
+  width:38px;height:38px;border-radius:10px;
   display:flex;align-items:center;justify-content:center;
-  font-size:20px;margin-bottom:11px;
-  background:rgba(255,255,255,0.45);
-  backdrop-filter:blur(14px) saturate(180%);
-  -webkit-backdrop-filter:blur(14px) saturate(180%);
-  border:1px solid rgba(255,255,255,0.7);
-  box-shadow:0 4px 14px rgba(14,165,233,0.12), inset 0 1px 2px rgba(255,255,255,0.85);
-  transition:all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  filter:drop-shadow(0 2px 5px rgba(0,0,0,0.06));
-}
-body.dark-mode .gsc-ico{
-  background:rgba(15,23,42,0.85);
-  border-color:rgba(255,255,255,0.08);
-  box-shadow:0 4px 16px rgba(0,0,0,0.4), inset 0 1px 2px rgba(255,255,255,0.06);
+  font-size:18px;margin-bottom:12px;
+  transition:all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .gsc:hover .gsc-ico{
-  transform:scale(1.12) translateY(-2px) rotate(4deg);
-  box-shadow:0 8px 20px rgba(14,165,233,0.24), inset 0 1px 3px rgba(255,255,255,0.9);
+  transform:scale(1.06);
 }
 .gsc:nth-child(1) .gsc-ico{background:rgba(14,165,233,0.08);border:1px solid rgba(14,165,233,0.2);color:#0284c7;}
 .gsc:nth-child(2) .gsc-ico{background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);color:#4f46e5;}
@@ -1367,11 +1341,15 @@ body.dark-mode .ai-bubble-btn svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.1rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(15, 23, 42, 0.5);
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #ffffff;
   position: relative;
   gap: 10px;
+}
+body.dark-mode .ai-drawer-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(13, 19, 33, 0.95);
 }
 .ai-drawer-title-group {
   display: flex;
@@ -1573,33 +1551,22 @@ body.dark-mode .ai-msg-meta .tech-tag {
   border: 1px solid rgba(56, 189, 248, 0.2);
 }
 
-/* ═══════════ CYBER TELEMETRY HUD & BENTO GRID ═══════════ */
+/* ═══════════ ACADEMIC SNAPSHOT HUD & PROMPT CARDS ═══════════ */
 .ai-hud-card {
-  background: rgba(240, 249, 255, 0.7);
-  border: 1px solid rgba(14, 165, 233, 0.25);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 14px;
   padding: 12px 14px;
-  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.08);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   position: relative;
   overflow: hidden;
 }
 body.dark-mode .ai-hud-card {
-  background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(8, 12, 20, 0.98));
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: rgba(13, 19, 33, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
-.ai-hud-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, #0284c7, #6366f1, #10b981);
-}
-body.dark-mode .ai-hud-card::before {
-  background: linear-gradient(90deg, #38bdf8, #818cf8, #34d399);
-}
+.ai-hud-card::before { display: none; }
 .ai-hud-top {
   display: flex;
   justify-content: space-between;
@@ -1611,8 +1578,8 @@ body.dark-mode .ai-hud-card::before {
   align-items: center;
   gap: 6px;
   font-size: 9.5px;
-  font-weight: 800;
-  letter-spacing: 0.6px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
   color: #0284c7;
   text-transform: uppercase;
 }
@@ -1624,12 +1591,9 @@ body.dark-mode .ai-hud-tag {
   height: 6px;
   border-radius: 50%;
   background: #0284c7;
-  box-shadow: 0 0 6px #0284c7;
-  animation: hudPulse 2s infinite;
 }
 body.dark-mode .hud-pulse-ring {
   background: #38bdf8;
-  box-shadow: 0 0 8px #38bdf8;
 }
 .ai-hud-sem {
   font-size: 10px;
@@ -1644,10 +1608,10 @@ body.dark-mode .ai-hud-sem {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
-  background: rgba(255, 255, 255, 0.7);
+  background: #f8fafc;
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px solid rgba(14, 165, 233, 0.12);
+  border: 1px solid #f1f5f9;
 }
 body.dark-mode .ai-hud-grid {
   background: rgba(2, 6, 23, 0.55);
@@ -1694,7 +1658,7 @@ body.dark-mode .val-green { color: #34d399; }
 .ai-hud-footer {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(14, 165, 233, 0.1);
+  border-top: 1px solid #f1f5f9;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1713,41 +1677,42 @@ body.dark-mode .hud-next-text strong {
   color: #f8fafc;
 }
 
-/* ═══════════ 2x2 BENTO INTERACTIVE ACTION GRID ═══════════ */
+/* ═══════════ PROMPT SUGGESTION CARDS ═══════════ */
 .ai-bento-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 9px;
-  margin-top: 4px;
+  gap: 8px;
+  margin-top: 2px;
 }
 .ai-bento-card {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(14, 165, 233, 0.16);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 11px 12px;
   cursor: pointer;
-  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   position: relative;
   overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 body.dark-mode .ai-bento-card {
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  background: rgba(13, 19, 33, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 .ai-bento-card:hover {
   transform: translateY(-2px);
-  background: rgba(255, 255, 255, 0.95);
-  border-color: var(--sky);
-  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.18);
+  background: #ffffff;
+  border-color: #38bdf8;
+  box-shadow: 0 6px 16px rgba(14, 165, 233, 0.12);
 }
 body.dark-mode .ai-bento-card:hover {
-  background: rgba(22, 33, 58, 0.92);
+  background: rgba(20, 30, 52, 0.9);
   border-color: rgba(56, 189, 248, 0.4);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(56, 189, 248, 0.12);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
 }
 .bento-top {
   display: flex;
@@ -1755,30 +1720,30 @@ body.dark-mode .ai-bento-card:hover {
   align-items: center;
 }
 .bento-icon-box {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
 }
-.bento-cyan { background: rgba(14, 165, 233, 0.12); color: #0284c7; }
-body.dark-mode .bento-cyan { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.25); }
-.bento-indigo { background: rgba(99, 102, 241, 0.12); color: #4f46e5; }
-body.dark-mode .bento-indigo { background: rgba(129, 140, 248, 0.15); color: #818cf8; border: 1px solid rgba(129, 140, 248, 0.25); }
-.bento-emerald { background: rgba(16, 185, 129, 0.12); color: #059669; }
-body.dark-mode .bento-emerald { background: rgba(52, 211, 153, 0.15); color: #34d399; border: 1px solid rgba(52, 211, 153, 0.25); }
-.bento-amber { background: rgba(245, 158, 11, 0.12); color: #d97706; }
-body.dark-mode .bento-amber { background: rgba(251, 191, 36, 0.15); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.25); }
+.bento-cyan { background: rgba(14, 165, 233, 0.1); color: #0284c7; }
+body.dark-mode .bento-cyan { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+.bento-indigo { background: rgba(99, 102, 241, 0.1); color: #4f46e5; }
+body.dark-mode .bento-indigo { background: rgba(129, 140, 248, 0.15); color: #818cf8; }
+.bento-emerald { background: rgba(16, 185, 129, 0.1); color: #059669; }
+body.dark-mode .bento-emerald { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+.bento-amber { background: rgba(245, 158, 11, 0.1); color: #d97706; }
+body.dark-mode .bento-amber { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
 .bento-arrow {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
-  transition: transform 0.2s, color 0.2s;
+  transition: transform 0.18s, color 0.18s;
 }
 body.dark-mode .bento-arrow { color: #64748b; }
 .ai-bento-card:hover .bento-arrow {
-  color: var(--deep);
+  color: #0284c7;
   transform: translate(2px, -2px);
 }
 body.dark-mode .ai-bento-card:hover .bento-arrow {
@@ -1786,7 +1751,7 @@ body.dark-mode .ai-bento-card:hover .bento-arrow {
   transform: translate(2px, -2px);
 }
 .bento-title {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink);
   letter-spacing: -0.2px;
@@ -1806,15 +1771,15 @@ body.dark-mode .bento-desc {
 /* ═══════════ SLASH COMMAND PILLS & FOOTER ═══════════ */
 .ai-drawer-footer {
   padding: 0.85rem 1.1rem;
-  border-top: 1px solid rgba(14, 165, 233, 0.12);
-  background: rgba(255, 255, 255, 0.7);
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 body.dark-mode .ai-drawer-footer {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 12, 20, 0.95);
+  background: rgba(9, 14, 24, 0.98);
 }
 .ai-slash-bar {
   display: flex;
@@ -1825,27 +1790,27 @@ body.dark-mode .ai-drawer-footer {
 }
 .ai-slash-bar::-webkit-scrollbar { display: none; }
 .ai-slash-pill {
-  background: rgba(255, 255, 255, 0.65);
-  border: 1px solid rgba(14, 165, 233, 0.2);
-  border-radius: 6px;
-  color: var(--deep);
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  color: #0369a1;
   font-size: 11px;
   font-weight: 600;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  padding: 3px 8px;
+  font-family: inherit;
+  padding: 4px 10px;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
 }
 body.dark-mode .ai-slash-pill {
-  background: rgba(15, 23, 42, 0.8);
+  background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.08);
   color: #94a3b8;
 }
 .ai-slash-pill:hover {
-  background: rgba(14, 165, 233, 0.15);
-  border-color: var(--sky);
-  color: var(--ink);
+  background: rgba(14, 165, 233, 0.12);
+  border-color: #0ea5e9;
+  color: #0284c7;
 }
 body.dark-mode .ai-slash-pill:hover {
   background: rgba(56, 189, 248, 0.12);
@@ -2090,18 +2055,18 @@ body.dark-mode .ai-act-btn:hover {
     <div class="sb-brand"><div class="sb-ico">E</div><div><div class="sb-nm">EduTrack</div><div class="sb-st">ACADEMIC INTELLIGENCE</div></div></div>
     <div id="snav">
       <div class="sb-sec">Student Workspace</div>
-      <div class="nav-i active" onclick="go('dashboard')"><span class="nav-n">01</span>Dashboard</div>
-      <div class="nav-i" onclick="go('trajectory')"><span class="nav-n">02</span>Trajectory Planner</div>
-      <div class="nav-i" onclick="go('cgpa')"><span class="nav-n">03</span>CGPA Calculator</div>
-      <div class="nav-i" onclick="go('advisor')"><span class="nav-n">04</span>AI Advisor</div>
-      <div class="nav-i" onclick="go('analytics')"><span class="nav-n">05</span>Analytics</div>
-      <div class="nav-i" onclick="go('attendance')"><span class="nav-n">06</span>Attendance &amp; Schedule</div>
-      <div class="nav-i" onclick="go('settings')"><span class="nav-n">07</span>Settings</div>
+      <div class="nav-i active" onclick="go('dashboard')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect></svg><span>Dashboard</span></div>
+      <div class="nav-i" onclick="go('trajectory')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg><span>Trajectory Planner</span></div>
+      <div class="nav-i" onclick="go('cgpa')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="16" y1="14" x2="16" y2="18"></line><path d="M16 10h.01M12 10h.01M8 10h.01M12 14h.01M8 14h.01M12 18h.01M8 18h.01"></path></svg><span>CGPA Calculator</span></div>
+      <div class="nav-i" onclick="go('advisor')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2 2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"></path><rect x="4" y="8" width="16" height="12" rx="2"></rect><circle cx="9" cy="14" r="1.5"></circle><circle cx="15" cy="14" r="1.5"></circle></svg><span>AI Advisor</span></div>
+      <div class="nav-i" onclick="go('analytics')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg><span>Analytics</span></div>
+      <div class="nav-i" onclick="go('attendance')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg><span>Attendance &amp; Schedule</span></div>
+      <div class="nav-i" onclick="go('settings')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg><span>Settings</span></div>
     </div>
     <div id="fnav" style="display:none;">
       <div class="sb-sec">Faculty Workspace</div>
-      <div class="nav-i active" onclick="go('fdash')"><span class="nav-n">01</span>Dashboard</div>
-      <div class="nav-i" onclick="go('fsec')"><span class="nav-n">02</span>Section Assignments</div>
+      <div class="nav-i active" onclick="go('fdash')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect></svg><span>Dashboard</span></div>
+      <div class="nav-i" onclick="go('fsec')"><svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg><span>Section Assignments</span></div>
     </div>
     <div class="sb-bot">
       <button class="sb-theme-toggle" onclick="toggleTheme()" id="sb-theme-btn" title="Toggle Light / Dark Mode">
@@ -2596,7 +2561,7 @@ body.dark-mode .ai-act-btn:hover {
           <button class="qp" onclick="sq('Attendance Clearance Audit')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:5px;display:inline-block;"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect><path d="M9 14l2 2 4-4"></path></svg>Attendance Audit</button>
         </div>
         <div class="chat-box" id="cbox"><div class="msg ai"><div class="mav">AI</div><div class="mb">Hello Mahabub! I am your EduTrack AI Academic Advisor. Your current CGPA is 3.22 across 24 completed credits. How can I guide your academic roadmap today?</div></div></div>
-        <div class="chat-row"><input class="chat-inp" id="ci" placeholder="Ask anything about your degree in Academic English or বাংলা…" onkeypress="if(event.key==='Enter')sm()"><button class="btn-send" onclick="sm()">Send</button></div>
+        <div class="chat-row"><input class="chat-inp" id="ci" placeholder="Ask anything about courses, retakes, or CGPA goals…" onkeypress="if(event.key==='Enter')sm()"><button class="btn-send" onclick="sm()">Send</button></div>
       </div>
 
       <!-- 05 ANALYTICS -->
@@ -2761,7 +2726,7 @@ body.dark-mode .ai-act-btn:hover {
       <div>
         <div class="ai-drawer-name">EduTrack AI</div>
         <div class="ai-drawer-sub">
-          <span class="hud-status-dot"></span> BUBT Neural Engine · 100% Offline
+          <span class="hud-status-dot"></span> Offline Assistant · BUBT CSE
         </div>
       </div>
     </div>
@@ -2774,10 +2739,10 @@ body.dark-mode .ai-act-btn:hover {
   </div>
 
   <div class="ai-drawer-body" id="ai-drawer-body">
-    <!-- ACADEMIC TELEMETRY HUD -->
+    <!-- ACADEMIC SNAPSHOT HUD -->
     <div class="ai-hud-card">
       <div class="ai-hud-top">
-        <div class="ai-hud-tag"><span class="hud-pulse-ring"></span> Live Telemetry</div>
+        <div class="ai-hud-tag"><span class="hud-pulse-ring"></span> Academic Snapshot</div>
         <div class="ai-hud-sem">BUBT CSE · SEMESTER 4</div>
       </div>
       <div class="ai-hud-grid">
@@ -2800,57 +2765,57 @@ body.dark-mode .ai-act-btn:hover {
       </div>
       <div class="ai-hud-footer">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;display:inline-block;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        <span class="hud-next-text">Next Class: <strong>MAT101 (Diff. Calculus)</strong> · 11:00 AM (Room 402)</span>
+        <span class="hud-next-text">Next: <strong>MAT101 (Diff. Calculus)</strong> · 11:00 AM (Room 402)</span>
       </div>
     </div>
 
     <!-- AI GREETING -->
     <div class="ai-msg ai">
       <div class="ai-msg-bubble">
-        <strong>Local Academic Engine Active.</strong> Ready to simulate grade projections, analyze retake pathways, or audit exam clearance for BUBT CSE.
+        <strong>Hi, I'm EduTrack AI.</strong> Your personal academic copilot. Ask me how to push your CGPA to 3.85, simulate retaking courses, or check exam clearance.
       </div>
       <div class="ai-msg-meta">
         <div style="display:flex;align-items:center;gap:6px;">
-          <span>Autonomous Heuristics</span>
+          <span>Offline Assistant</span>
           <span>·</span>
-          <span class="tech-tag">0ms Latency</span>
+          <span class="tech-tag">Instant Response</span>
         </div>
       </div>
     </div>
 
-    <!-- 2x2 BENTO ACTION GRID -->
+    <!-- PROMPT SUGGESTION CARDS -->
     <div class="ai-bento-grid">
       <div class="ai-bento-card" onclick="askEduTrackAi('How can I raise my CGPA from 3.22 to 3.85?')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-cyan"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg></div>
+          <div class="bento-icon-box bento-cyan"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
-        <div class="bento-title">GPA Booster</div>
-        <div class="bento-desc">Roadmap to 3.85 Goal</div>
+        <div class="bento-title">GPA Roadmap</div>
+        <div class="bento-desc">Plan to reach 3.85 Target</div>
       </div>
       <div class="ai-bento-card" onclick="askEduTrackAi('Course Retake Strategy & Impact')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-indigo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></div>
+          <div class="bento-icon-box bento-indigo"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
         <div class="bento-title">Retake Simulator</div>
-        <div class="bento-desc">Replace D/F Grades</div>
+        <div class="bento-desc">Analyze D/F Grade Impact</div>
       </div>
       <div class="ai-bento-card" onclick="askEduTrackAi('Attendance Clearance Audit')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-emerald"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
+          <div class="bento-icon-box bento-emerald"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
         <div class="bento-title">Exam Clearance</div>
-        <div class="bento-desc">Attendance &amp; Admit Audit</div>
+        <div class="bento-desc">Admit &amp; Attendance Check</div>
       </div>
       <div class="ai-bento-card" onclick="askEduTrackAi('High-Yield Exam Preparation Framework')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
+          <div class="bento-icon-box bento-amber"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
-        <div class="bento-title">7-Day Protocol</div>
-        <div class="bento-desc">BUBT High-Yield Plan</div>
+        <div class="bento-title">Study Protocol</div>
+        <div class="bento-desc">High-Yield Exam Plan</div>
       </div>
     </div>
   </div>
@@ -2863,7 +2828,7 @@ body.dark-mode .ai-act-btn:hover {
       <button class="ai-slash-pill" onclick="insertSlashCommand('/waiver')"><span class="slash-sym">/</span>waiver</button>
     </div>
     <div class="ai-drawer-input-row">
-      <input type="text" id="ai-drawer-input" class="ai-drawer-input" placeholder="Ask EduTrack AI in English or বাংলায় প্রশ্ন করুন..." onkeydown="handleAiDrawerKey(event)">
+      <input type="text" id="ai-drawer-input" class="ai-drawer-input" placeholder="Ask EduTrack AI anything or type / for tools..." onkeydown="handleAiDrawerKey(event)">
       <button class="ai-drawer-send" id="ai-drawer-send-btn" onclick="sendAiDrawerMsg()" title="Send"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
     </div>
   </div>
@@ -2901,7 +2866,7 @@ body.dark-mode .ai-act-btn:hover {
             <strong style="color:var(--deep);">03 CGPA Calculator:</strong> Interactive semester GPA estimator with BUBT grade point scale.
           </div>
           <div style="padding:9px;border-radius:9px;background:var(--input-bg);border:1px solid rgba(14,165,233,.12);">
-            <strong style="color:var(--deep);">04 AI Advisor:</strong> Autonomous bilingual academic advisor (English / বাংলা) for course roadmap.
+            <strong style="color:var(--deep);">AI Advisor:</strong> Intelligent academic advisor for degree roadmap, retakes, and CGPA projections.
           </div>
           <div style="padding:9px;border-radius:9px;background:var(--input-bg);border:1px solid rgba(14,165,233,.12);">
             <strong style="color:var(--deep);">05 Analytics:</strong> Grade distribution breakdown and 142-credit completion tracker.
@@ -3723,7 +3688,7 @@ function setAiLanguage(lang) {
   currentAiLang = lang || 'en';
   var inp = document.getElementById('ai-drawer-input');
   if (inp && !inp.value) {
-    inp.placeholder = 'Ask EduTrack AI in English or বাংলায় প্রশ্ন করুন...';
+    inp.placeholder = 'Ask EduTrack AI anything or type / for tools...';
   }
 }
 
@@ -4004,10 +3969,10 @@ function clearAiDrawerChat() {
   var body = document.getElementById('ai-drawer-body');
   if (!body) return;
   body.innerHTML = `
-    <!-- ACADEMIC TELEMETRY HUD -->
+    <!-- ACADEMIC SNAPSHOT HUD -->
     <div class="ai-hud-card">
       <div class="ai-hud-top">
-        <div class="ai-hud-tag"><span class="hud-pulse-ring"></span> Live Telemetry</div>
+        <div class="ai-hud-tag"><span class="hud-pulse-ring"></span> Academic Snapshot</div>
         <div class="ai-hud-sem">BUBT CSE · SEMESTER 4</div>
       </div>
       <div class="ai-hud-grid">
@@ -4030,57 +3995,57 @@ function clearAiDrawerChat() {
       </div>
       <div class="ai-hud-footer">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1.5px;margin-right:4px;display:inline-block;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        <span class="hud-next-text">Next Class: <strong>MAT101 (Diff. Calculus)</strong> · 11:00 AM (Room 402)</span>
+        <span class="hud-next-text">Next: <strong>MAT101 (Diff. Calculus)</strong> · 11:00 AM (Room 402)</span>
       </div>
     </div>
 
     <!-- AI GREETING -->
     <div class="ai-msg ai">
       <div class="ai-msg-bubble">
-        <strong>Local Academic Engine Active.</strong> Ready to simulate grade projections, analyze retake pathways, or audit exam clearance for BUBT CSE.
+        <strong>Hi, I'm EduTrack AI.</strong> Your personal academic copilot. Ask me how to push your CGPA to 3.85, simulate retaking courses, or check exam clearance.
       </div>
       <div class="ai-msg-meta">
         <div style="display:flex;align-items:center;gap:6px;">
-          <span>Autonomous Heuristics</span>
+          <span>Offline Assistant</span>
           <span>·</span>
-          <span class="tech-tag">0ms Latency</span>
+          <span class="tech-tag">Instant Response</span>
         </div>
       </div>
     </div>
 
-    <!-- 2x2 BENTO ACTION GRID -->
+    <!-- PROMPT SUGGESTION CARDS -->
     <div class="ai-bento-grid">
       <div class="ai-bento-card" onclick="askEduTrackAi('How can I raise my CGPA from 3.22 to 3.85?')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-cyan"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg></div>
+          <div class="bento-icon-box bento-cyan"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
-        <div class="bento-title">GPA Booster</div>
-        <div class="bento-desc">Roadmap to 3.85 Goal</div>
+        <div class="bento-title">GPA Roadmap</div>
+        <div class="bento-desc">Plan to reach 3.85 Target</div>
       </div>
       <div class="ai-bento-card" onclick="askEduTrackAi('Course Retake Strategy & Impact')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-indigo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></div>
+          <div class="bento-icon-box bento-indigo"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
         <div class="bento-title">Retake Simulator</div>
-        <div class="bento-desc">Replace D/F Grades</div>
+        <div class="bento-desc">Analyze D/F Grade Impact</div>
       </div>
       <div class="ai-bento-card" onclick="askEduTrackAi('Attendance Clearance Audit')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-emerald"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
+          <div class="bento-icon-box bento-emerald"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
         <div class="bento-title">Exam Clearance</div>
-        <div class="bento-desc">Attendance &amp; Admit Audit</div>
+        <div class="bento-desc">Admit &amp; Attendance Check</div>
       </div>
       <div class="ai-bento-card" onclick="askEduTrackAi('High-Yield Exam Preparation Framework')">
         <div class="bento-top">
-          <div class="bento-icon-box bento-amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
+          <div class="bento-icon-box bento-amber"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></div>
           <span class="bento-arrow">↗</span>
         </div>
-        <div class="bento-title">7-Day Protocol</div>
-        <div class="bento-desc">BUBT High-Yield Plan</div>
+        <div class="bento-title">Study Protocol</div>
+        <div class="bento-desc">High-Yield Exam Plan</div>
       </div>
     </div>
   `;

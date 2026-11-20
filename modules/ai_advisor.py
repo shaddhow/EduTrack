@@ -78,6 +78,7 @@ class AIAdvisorEngine:
         if any(w in q_trim for w in (
             "kmn aso", "kmn acho", "kemon aso", "kemon acho", "kmn", "ki obostha", "ki khobor",
             "valo aso", "bhalo aso", "hi", "hello", "hey", "salam", "assalamu", "how are you",
+            "golpo", "adda", "kotha bol", "mon kharap", "mon bhalo na", "bhalo lagena", "valo lagena",
             "improve my cgpa", "raise my cgpa", "target cgpa", "reach my target"
         )):
             return self._local_advice(profile, user_query, language=language)
@@ -99,7 +100,12 @@ class AIAdvisorEngine:
                     threads=8
                 )
                 if gen_text and len(gen_text.strip()) > 8:
-                    return gen_text.strip()
+                    # Sanity check: ensure the model did not emit a degenerate repeating loop
+                    lines = [l.strip() for l in gen_text.splitlines() if l.strip()]
+                    if len(lines) >= 4 and len(set(lines)) / len(lines) < 0.6:
+                        pass
+                    else:
+                        return gen_text.strip()
         except Exception:
             pass
 
@@ -288,6 +294,18 @@ class AIAdvisorEngine:
                 f"You're very welcome, {name}! \n\n"
                 "Maintain your structured study habits, focus on core engineering subjects, and ensure high lecture attendance. "
                 "EduTrackAi is always running 100% offline whenever you need strategic degree guidance!"
+            )
+
+        # --- 2.5 CASUAL CHITCHAT, STORY & RELAXATION ---
+        if any(w in q_lower for w in ("golpo", "adda", "kotha bol", "story", "chitchat", "গল্প", "আড্ডা", "কথা বল")):
+            if is_bn:
+                return (
+                    f"আরে নিশ্চয়ই, {name}! সারাক্ষণ শুধু পড়াশোনা আর কোডিংয়ের প্রেসার থাকলে মাথা জ্যাম হয়ে যাওয়া খুব স্বাভাবিক। একটু গল্প বা আড্ডা দেওয়া তো খুবই দরকার!\n\n"
+                    "বলুন, কী নিয়ে গল্প করবেন? ক্যাম্পাস লাইফ, বন্ধুদের কোনো মজার ঘটনা, সিএসই ল্যাব টেস্টের প্যারা, নাকি অন্য কোনো বিষয়? আমি শুনছি!"
+                )
+            return (
+                f"Of course, {name}! Stepping away from intense engineering problems and taking a breather is essential for mental clarity.\n\n"
+                "What's on your mind? Campus life, tech stories, gaming, or just unwinding? I'm listening!"
             )
 
         # --- 3. GRATITUDE ---
