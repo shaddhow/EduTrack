@@ -1,4 +1,4 @@
-"""Academic coaching backed by Gemini, local Ollama LLMs, and an advanced offline expert inference engine."""
+"""Academic coaching backed by local on-device Llama 3.2, local Ollama LLMs, and an advanced offline expert inference engine."""
 
 from __future__ import annotations
 
@@ -49,22 +49,11 @@ def build_student_academic_profile(
 
 
 class AIAdvisorEngine:
-    """Generate personalized coaching, with Gemini cloud, local Ollama, and offline expert reasoning."""
+    """Generate personalized coaching with local on-device Llama 3.2, local Ollama, and offline expert reasoning."""
 
     def __init__(self, api_key: str | None = None) -> None:
         self.client: Any | None = None
-        self.cloud_error: str | None = (
-            "Using personalized local coaching; no Gemini API key is configured."
-            if not api_key or not api_key.strip()
-            else None
-        )
-        if api_key and api_key.strip():
-            try:
-                from google import genai
-
-                self.client = genai.Client(api_key=api_key.strip())
-            except Exception as exc:
-                self.cloud_error = f"Gemini could not be initialized ({type(exc).__name__})."
+        self.cloud_error: str | None = "Using 100% offline local academic coaching."
 
     def get_academic_advice(
         self,
@@ -93,31 +82,7 @@ class AIAdvisorEngine:
         )):
             return self._local_advice(profile, user_query, language=language)
 
-        # 1. Try Gemini Cloud if configured
-        if self.client is not None:
-            try:
-                from google.genai import types
-
-                response = self.client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=user_query,
-                    config=types.GenerateContentConfig(
-                        system_instruction=self._build_prompt(
-                            profile, conversation, language=language
-                        )
-                    ),
-                )
-                answer = getattr(response, "text", None)
-                if answer and answer.strip():
-                    return answer.strip()
-                self.cloud_error = "Gemini returned an empty response."
-            except Exception as exc:
-                self.cloud_error = (
-                    f"Gemini request failed ({type(exc).__name__}); "
-                    "using personalized local coaching."
-                )
-
-        # 2. Try In-App Embedded Generative LLM (Llama 3.2 1B in models/ folder - 100% Offline)
+        # 1. Try In-App Embedded Generative LLM (Llama 3.2 1B in models/ folder - 100% Offline)
         try:
             from modules.offline_llm import EmbeddedOfflineLLM
             embedded = EmbeddedOfflineLLM.get_instance()
@@ -138,12 +103,12 @@ class AIAdvisorEngine:
         except Exception:
             pass
 
-        # 3. Try Local Ollama LLM if available on localhost:11434 (100% offline)
+        # 2. Try Local Ollama LLM if available on localhost:11434 (100% offline)
         ollama_response = self._try_query_ollama(profile, user_query, conversation, language=language)
         if ollama_response:
             return ollama_response
 
-        # 4. Fallback to Deep Academic Inference Engine (offline rule-based reasoning)
+        # 3. Fallback to Deep Academic Inference Engine (offline rule-based reasoning)
         return self._local_advice(profile, user_query, language=language)
 
     @classmethod

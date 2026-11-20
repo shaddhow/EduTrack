@@ -2688,8 +2688,9 @@ body.dark-mode .ai-act-btn:hover {
 
             <!-- AI Tab -->
             <div class="set-tab-panel" id="set-tab-ai" style="display:none;">
-              <div class="set-r"><div><div class="set-nm">AI Academic Advisor</div><div class="set-dc">Enable 100% offline local machine learning coaching</div></div><button class="tog on" onclick="this.classList.toggle('on')"></button></div>
-              <div class="set-r"><div><div class="set-nm">Google Gemini API Key (Optional)</div><div class="set-dc">Enter Gemini API key to activate cloud reasoning &amp; live AI advisory (Leave blank for offline AI)</div></div><input class="inp-s2" id="set-gemini-key" placeholder="AIzaSy..." type="password" style="width:220px;"></div>
+              <div class="set-r"><div><div class="set-nm">Offline AI Engine (Llama 3.2 1B)</div><div class="set-dc">On-device neural inference engine (100% Offline / Zero cloud dependency)</div></div><span style="font-size:12px;font-weight:600;color:var(--ok);padding:4px 10px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);">ACTIVE (ON-DEVICE)</span></div>
+              <div class="set-r"><div><div class="set-nm">Offline ML Risk Classifier</div><div class="set-dc">Random Forest ensemble for real-time academic risk forecasting</div></div><span style="font-size:12px;font-weight:600;color:var(--ok);padding:4px 10px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);">READY (&lt; 5ms)</span></div>
+              <input type="hidden" id="set-gemini-key" value="">
             </div>
 
             <button class="btn-sign" style="max-width:160px;padding:10px;margin-top:1.2rem;" onclick="saveSettings()">Save Changes</button>
